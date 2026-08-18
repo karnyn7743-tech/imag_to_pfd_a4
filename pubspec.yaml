@@ -1,6 +1,7 @@
-name: exams_automation
-description: نظام إدخال درجات الطلاب عبر مسح QR Code والدرجة المكتوبة بخط اليد
+name: image_to_pdf_a4
+description: "تطبيق تحويل الصور إلى ملفات PDF بمقاس A4 وبأعلى جودة طباعة"
 publish_to: 'none'
+
 version: 1.0.0+1
 
 environment:
@@ -10,44 +11,31 @@ dependencies:
   flutter:
     sdk: flutter
 
-  # ===== المكتبات الأساسية =====
-  cupertino_icons: ^1.0.8
+  # 📄 إنشاء وتشكيل مستندات الـ PDF
+  pdf: ^3.11.1
 
-  # ===== الكاميرا ومعالجة الصور =====
-  # camera: ^0.11.0      # ← علّق هذا السطر لتجنب التعارض (تتم إدارته عبر mobile_scanner)
-  file_picker: ^8.1.0
-  image: ^4.2.0
-  path_provider: ^2.1.3
+  # 🖨️ المعاينة والطباعة المباشرة وحفظ الملفات
+  printing: ^5.13.2
 
-  # ===== Excel و QR =====
-  excel: ^4.0.0
-  mobile_scanner: ^5.1.0
-  qrscan_plus: ^1.0.8
+  # 🖼️ اختيار الصور من الاستوديو أو الكاميرا
+  image_picker: ^1.1.2
 
-  # ===== OCR والتعرف على النصوص =====
-  google_ml_kit: ^0.18.0
+  # 📁 اختيار الصور أو الملفات من جهاز المستخدم
+  file_picker: ^8.1.2
 
-  # ===== التخزين والصلاحيات =====
-  shared_preferences: ^2.3.0
-  provider: ^6.1.0
+  # 📂 الوصول لإدارة مسارات التخزين في الجهاز
+  path_provider: ^2.1.4
+
+  # 🔒 إدارة صلاحيات الوصول للصور والتخزين
   permission_handler: ^11.3.1
+
+  cupertino_icons: ^1.0.8
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^5.0.0
-  flutter_launcher_icons: ^0.14.4
 
-# ===== إعدادات الأيقونة (علّقها إذا لم تكن الصورة جاهزة) =====
-flutter_launcher_icons:
-  android: "launcher_icon"
-  ios: true
-  image_path: "assets/images/apps_icon.png"
-  min_sdk_android: 21
+  flutter_lints: ^4.0.0
 
 flutter:
   uses-material-design: true
-
-  # ===== مجلدات الأصول (فعّل عند الحاجة) =====
-  # assets:
-  #   - assets/images/
