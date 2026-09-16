@@ -1,29 +1,31 @@
 plugins {
     id("com.android.application")
     id("kotlin-android")
-    // يجب تطبيق Flutter Gradle Plugin بعد Android و Kotlin
     id("dev.flutter.flutter-gradle-plugin")
 }
 
 android {
     // ============================================================
-    // === اسم الحزمة (Package) ===
+    // === اسم الحزمة ===
     // ============================================================
     namespace = "com.lanphone.app"
 
     // ============================================================
     // === إصدارات SDK ===
     // ============================================================
-    // إصدار SDK المستخدم للبناء
     compileSdk = 36
 
-    // إصدار NDK المطلوب (مهم لـ flutter_webrtc)
-    ndkVersion = "27.0.12077973"
+    // ✅ تم الترقية من 27.0.12077973 إلى 28.2.13676358
+    // السبب: مكتبة jni تتطلب NDK 28.2
+    ndkVersion = "28.2.13676358"
 
     // ============================================================
     // === إصدارات Java و Kotlin ===
     // ============================================================
     compileOptions {
+        // ✅ تم التفعيل — مطلوب لـ flutter_local_notifications
+        isCoreLibraryDesugaringEnabled = true
+
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
@@ -36,25 +38,12 @@ android {
     // === الإعدادات الافتراضية ===
     // ============================================================
     defaultConfig {
-        // معرّف التطبيق (يجب أن يطابق namespace)
         applicationId = "com.lanphone.app"
-
-        // الحد الأدنى لإصدار أندرويد المدعوم
-        // 23 = Android 6.0 (Marshmallow)
         minSdk = 23
-
-        // الإصدار المستهدف (مطلوب لـ Google Play)
         targetSdk = 36
-
-        // رقم إصدار التطبيق واسمه
         versionCode = flutter.versionCode
         versionName = flutter.versionName
-
-        // دعم Dex المتعدد (لأن عدد الدوال > 64k بسبب WebRTC)
         multiDexEnabled = true
-
-        // ⚠️ مهم: لا تضف manifestPlaceholders هنا
-        // Flutter 3.29+ يتولى applicationName تلقائيًا
     }
 
     // ============================================================
@@ -62,14 +51,9 @@ android {
     // ============================================================
     buildTypes {
         release {
-            // استخدام توقيع debug حاليًا (يجب تغييره للنشر)
             signingConfig = signingConfigs.getByName("debug")
-
-            // تفعيل تصغير الكود (ProGuard/R8)
             isMinifyEnabled = false
             isShrinkResources = false
-
-            // قواعد ProGuard
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -77,7 +61,6 @@ android {
         }
 
         debug {
-            // تفعيل عرض السجلات في وضع التصحيح
             isDebuggable = true
         }
     }
@@ -85,7 +68,6 @@ android {
     // ============================================================
     // === إعدادات الحزم ===
     // ============================================================
-    // لحل مشاكل تعارض بعض المكتبات (WebRTC + غيرها)
     packaging {
         resources {
             excludes += setOf(
@@ -105,7 +87,6 @@ android {
     // ============================================================
     // === التعامل مع مشاكل البناء ===
     // ============================================================
-    // تعطيل فحص lint الصارم (لتجنب فشل البناء بسبب تحذيرات)
     lint {
         checkReleaseBuilds = false
         abortOnError = false
@@ -113,8 +94,13 @@ android {
 }
 
 // ============================================================
-// === إعدادات Flutter ===
+// === التبعيات (Dependencies) ===
 // ============================================================
+// ✅ مطلوب لـ flutter_local_notifications
+dependencies {
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
+}
+
 flutter {
     source = "../.."
 }
