@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/constants.dart';
 import '../../core/discovery/device_discovery.dart';
+import '../../data/database/database_helper.dart';
 import '../theme/app_theme.dart';
 import '../widgets/permission_dialog.dart';
 
@@ -46,19 +47,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _loadSettings() async {
-    final prefs = await SharedPreferences.getInstance();
-    final discovery = context.read<DeviceDiscovery>();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final discovery = context.read<DeviceDiscovery>();
 
-    if (!mounted) return;
-    setState(() {
-      _deviceName = discovery.deviceName;
-      _deviceId = discovery.deviceId;
-      _localIp = discovery.localIp;
-      _themeMode = prefs.getString(AppConstants.keyThemeMode) ?? 'system';
-      _vibrationEnabled = prefs.getBool(AppConstants.keyVibration) ?? true;
-      _soundEnabled = prefs.getBool(AppConstants.keyRingtone) ?? true;
-      _isLoading = false;
-    });
+      if (!mounted) return;
+      setState(() {
+        _deviceName = discovery.deviceName;
+        _deviceId = discovery.deviceId;
+        _localIp = discovery.localIp;
+        _themeMode = prefs.getString(AppConstants.keyThemeMode) ?? 'system';
+        _vibrationEnabled = prefs.getBool(AppConstants.keyVibration) ?? true;
+        _soundEnabled = prefs.getBool(AppConstants.keyRingtone) ?? true;
+        _isLoading = false;
+      });
+    } catch (e) {
+      debugPrint('[Settings] loadSettings error: $e');
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+    }
   }
 
   // ============================================
@@ -89,13 +96,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
             child: const Text('إلغاء'),
           ),
           FilledButton(
-            onPressed: () =>
-                Navigator.pop(ctx, controller.text.trim()),
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
             child: const Text('حفظ'),
           ),
         ],
       ),
     );
+
+    // حرّر وحدة التحكم بعد إغلاق الحوار
+    controller.dispose();
 
     if (newName == null || newName.isEmpty || newName == _deviceName) {
       return;
@@ -119,6 +128,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await prefs.setString(AppConstants.keyThemeMode, mode);
     if (!mounted) return;
     setState(() => _themeMode = mode);
+    _showSnack('سيُطبَّق المظهر عند إعادة فتح التطبيق');
   }
 
   // ============================================
@@ -208,10 +218,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (confirm != true) return;
 
     try {
-      // امسح قاعدة البيانات
-      final { DatabaseHelper } // ❌ خطأ مقصود — سيُصحَّح أدناه
+      // ✅ امسح كل البيانات من قاعدة البيانات
+      await DatabaseHelper.instance.wipeAll();
+
+      if (!mounted) return;
+
+      _showSnack('تم حذف جميع البيانات', isSuccess: true);
+
+      // انتظر قليلًا ثم أعد تحميل الإعدادات
+      await Future.delayed(const Duration(milliseconds: 800));
+      if (!mounted) return;
+
+      await _loadSettings();
     } catch (e) {
-      // ...
+      debugPrint('[Settings] clearAllData error: $e');
+      if (!mounted) return;
+      _showSnack('فشل حذف البيانات: $e');
     }
   }
 
@@ -220,6 +242,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   // ============================================
 
   void _showSnack(String message, {bool isSuccess = false}) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
@@ -240,43 +263,45 @@ class _SettingsScreenState extends State<SettingsScreen> {
         title: const Text('الإعدادات'),
       ),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? const Center(
+              child: CircularProgressIndicator(color: AppTheme.primaryColor),
+            )
           : ListView(
               padding: const EdgeInsets.symmetric(vertical: 8),
               children: [
                 // ============================================
-                // === قسم الملف الشخصي للجهاز ===
+                // === قسم رأس الجهاز ===
                 // ============================================
                 _buildDeviceHeader(),
 
                 // ============================================
                 // === قسم المظهر ===
                 // ============================================
-                _SectionTitle(title: 'المظهر'),
+                const _SectionTitle(title: 'المظهر'),
                 _buildThemeSection(),
 
                 // ============================================
                 // === قسم الإشعارات ===
                 // ============================================
-                _SectionTitle(title: 'الإشعارات والأصوات'),
+                const _SectionTitle(title: 'الإشعارات والأصوات'),
                 _buildNotificationsSection(),
 
                 // ============================================
                 // === قسم الشبكة ===
                 // ============================================
-                _SectionTitle(title: 'معلومات الشبكة'),
+                const _SectionTitle(title: 'معلومات الشبكة'),
                 _buildNetworkSection(),
 
                 // ============================================
                 // === قسم البيانات ===
                 // ============================================
-                _SectionTitle(title: 'البيانات'),
+                const _SectionTitle(title: 'البيانات'),
                 _buildDataSection(),
 
                 // ============================================
                 // === قسم عن التطبيق ===
                 // ============================================
-                _SectionTitle(title: 'عن التطبيق'),
+                const _SectionTitle(title: 'عن التطبيق'),
                 _buildAboutSection(),
 
                 const SizedBox(height: 32),
@@ -290,8 +315,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   // ============================================
 
   Widget _buildDeviceHeader() {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 8, 16, 8),
       padding: const EdgeInsets.all(20),
@@ -336,7 +359,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(width: 16),
 
-          // الاسم
+          // الاسم والحالة
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -361,18 +384,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   overflow: TextOverflow.ellipsis,
                 ),
                 const SizedBox(height: 6),
-                Row(
+                const Row(
                   children: [
-                    Container(
-                      width: 8,
-                      height: 8,
-                      decoration: const BoxDecoration(
-                        color: Colors.greenAccent,
-                        shape: BoxShape.circle,
-                      ),
+                    Icon(
+                      Icons.circle,
+                      size: 8,
+                      color: Colors.greenAccent,
                     ),
-                    const SizedBox(width: 6),
-                    const Text(
+                    SizedBox(width: 6),
+                    Text(
                       'يعمل',
                       style: TextStyle(
                         color: Colors.white70,
@@ -417,7 +437,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         RadioListTile<String>(
           value: 'light',
           groupValue: _themeMode,
-          onChanged: (v) => _setThemeMode(v!),
+          onChanged: (v) {
+            if (v != null) _setThemeMode(v);
+          },
           title: const Text('فاتح'),
           secondary: const Icon(Icons.light_mode_outlined),
           contentPadding: const EdgeInsets.symmetric(horizontal: 8),
@@ -425,7 +447,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         RadioListTile<String>(
           value: 'dark',
           groupValue: _themeMode,
-          onChanged: (v) => _setThemeMode(v!),
+          onChanged: (v) {
+            if (v != null) _setThemeMode(v);
+          },
           title: const Text('داكن'),
           secondary: const Icon(Icons.dark_mode_outlined),
           contentPadding: const EdgeInsets.symmetric(horizontal: 8),
@@ -433,7 +457,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         RadioListTile<String>(
           value: 'system',
           groupValue: _themeMode,
-          onChanged: (v) => _setThemeMode(v!),
+          onChanged: (v) {
+            if (v != null) _setThemeMode(v);
+          },
           title: const Text('حسب النظام'),
           secondary: const Icon(Icons.brightness_auto_outlined),
           contentPadding: const EdgeInsets.symmetric(horizontal: 8),
@@ -487,7 +513,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           title: 'معرّف الجهاز',
           value: _deviceId.isEmpty
               ? 'غير متوفر'
-              : '${_deviceId.substring(0, 8)}...',
+              : '${_deviceId.substring(0, _min(8, _deviceId.length))}...',
           onCopy: _deviceId.isEmpty
               ? null
               : () => _copyToClipboard(_deviceId, 'المعرّف'),
@@ -513,6 +539,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ],
     );
   }
+
+  // دالة مساعدة: الحد الأدنى بين رقمين
+  int _min(int a, int b) => a < b ? a : b;
 
   // ============================================
   // === قسم البيانات ===
