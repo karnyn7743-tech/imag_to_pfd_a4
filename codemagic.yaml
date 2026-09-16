@@ -1,123 +1,75 @@
 workflows:
   android-workflow:
     name: LanPhone Android Build
-    
-    # الحد الأقصى لمدة البناء (5 دقائق احتياط)
+
     max_build_duration: 120
-    
-    # نوع الجهاز (mac_mini_m2 أسرع)
     instance_type: mac_mini_m2
-    
-    # ============================================
-    # === إعدادات البيئة ===
-    # ============================================
+
     environment:
-      # إصدار Flutter (متوافق مع مشروعنا)
-      flutter: 3.24.0
-      
-      # إصدار Java (مطلوب لـ WebRTC)
+      # ⬇️⬇️⬇️ التحديث هنا ⬇️⬇️⬇️
+      flutter: 3.35.0
       java: 17
-      
-      # متغيرات البيئة
+
       vars:
-        # اسم الحزمة (يجب أن يطابق applicationId في build.gradle.kts)
         PACKAGE_NAME: "com.lanphone.app"
-        
-        # إصدار NDK المطلوب لـ flutter_webrtc
-        # ملاحظة: 27.0.12077973 هو الإصدار الذي نستخدمه
-        # إذا فشل، يمكن تجربة 26.3.11579264
         ANDROID_NDK_VERSION: "27.0.12077973"
-        
-        # مسار ملف APK النهائي
         APK_PATH: "build/app/outputs/flutter-apk/app-release.apk"
-    
-    # ============================================
-    # === الخطوات قبل البناء ===
-    # ============================================
+
     pre_build_script: |
-      # عرض إصدارات الأدوات للتشخيص
       echo "=== Flutter Version ==="
       flutter --version
       echo "=== Java Version ==="
       java -version
-      echo "=== Android SDK ==="
-      echo $ANDROID_SDK_ROOT
-      echo "=== NDK Version ==="
-      echo $ANDROID_NDK_VERSION
-      
-      # تثبيت إصدار NDK المطلوب إذا لم يكن موجودًا
+
       if [ ! -d "$ANDROID_SDK_ROOT/ndk/$ANDROID_NDK_VERSION" ]; then
         echo "Installing NDK $ANDROID_NDK_VERSION..."
         yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager \
           "ndk;$ANDROID_NDK_VERSION" || true
       fi
-      
-      # التحقق من وجود مجلدات الأصول
+
       mkdir -p assets/sounds assets/icons
       touch assets/sounds/.gitkeep assets/icons/.gitkeep
-      
-      # إنشاء local.properties
+
       echo "sdk.dir=$ANDROID_SDK_ROOT" > android/local.properties
       echo "flutter.sdk=$FLUTTER_ROOT" >> android/local.properties
       echo "ndk.dir=$ANDROID_SDK_ROOT/ndk/$ANDROID_NDK_VERSION" >> android/local.properties
-    
-    # ============================================
-    # === سكربتات البناء ===
-    # ============================================
+
     scripts:
-      # 1) تنظيف المشروع
       - name: Clean project
         script: flutter clean
-      
-      # 2) تنزيل الحزم
+
       - name: Get dependencies
         script: flutter pub get
-      
-      # 3) تحليل الكود (اختياري - للتحقق من الأخطاء)
+
       - name: Analyze code
         script: |
           flutter analyze || echo "⚠️ تحذيرات موجودة، نُكمل البناء"
-      
-      # 4) بناء APK للإصدار
+
       - name: Build Release APK
         script: |
           flutter build apk \
             --release \
             --no-shrink \
             --target-platform android-arm,android-arm64,android-x64
-      
-      # 5) عرض حجم الملف الناتج
+
       - name: Show APK info
         script: |
           ls -lh build/app/outputs/flutter-apk/
-      
-      # 6) بناء AAB لمتجر Play (اختياري)
+
       - name: Build Release App Bundle
         script: |
           flutter build appbundle \
             --release \
             --no-shrink
-    
-    # ============================================
-    # === القطع (Artifacts) ===
-    # ============================================
+
     artifacts:
-      # ملف APK
       - build/app/outputs/flutter-apk/app-release.apk
-      # ملف AAB
       - build/app/outputs/bundle/release/app-release.aab
-      # ملفات الرموز (للتصحيح)
       - build/app/outputs/symbols/
-      # السجلات (للتشخيص)
-      - flutter_drive.log
-    
-    # ============================================
-    # === الإشعارات (اختياري) ===
-    # ============================================
+
     publishing:
       email:
         recipients:
-          # ضع بريدك الإلكتروني هنا
           - your-email@example.com
         notify:
           success: true
