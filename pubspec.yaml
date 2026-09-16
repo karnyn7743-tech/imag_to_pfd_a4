@@ -12,6 +12,14 @@ dependencies:
     sdk: flutter
 
   # ============================================
+  # === دعم التوطين (العربية) ===
+  # ============================================
+  # ⚠️ مطلوب لـ GlobalMaterialLocalizations
+  # واستخدام DateFormat بالعربية
+  flutter_localizations:
+    sdk: flutter
+
+  # ============================================
   # === الواجهة (UI) ===
   # ============================================
   cupertino_icons: ^1.0.8
@@ -22,7 +30,7 @@ dependencies:
   provider: ^6.1.2
 
   # ============================================
-  # === الشبكة المحلية (LAN فقط) ===
+  # === الشبكة المحلية (LAN) ===
   # ============================================
   # WebSocket للتحكم (Signaling) بين الأجهزة
   web_socket_channel: ^3.0.1
@@ -98,7 +106,7 @@ dev_dependencies:
 flutter:
   uses-material-design: true
 
-  # الأصول (assets) — سنضيف الأصوات والأيقونات هنا لاحقًا
+  # الأصول (assets)
   assets:
     - assets/sounds/
     - assets/icons/
