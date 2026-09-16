@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:permission_handler/permission_handler.dart';
+import 'package:permission_handler/permission_handler.dart' as ph;
 import 'package:provider/provider.dart';
 
 import '../../../core/constants.dart';
@@ -63,10 +63,13 @@ class _CallsTabState extends State<CallsTab> {
       return;
     }
 
-    // اطلب الأذونات
+    // ✅ استخدام ph.Permission
     final permissions = callType == AppConstants.callTypeVideo
-        ? [Permission.microphone, Permission.camera]
-        : [Permission.microphone];
+        ? <ph.Permission>[
+            ph.Permission.microphone,
+            ph.Permission.camera,
+          ]
+        : <ph.Permission>[ph.Permission.microphone];
 
     final ok = await PermissionService.requestAll(permissions);
     if (!ok || !mounted) return;
