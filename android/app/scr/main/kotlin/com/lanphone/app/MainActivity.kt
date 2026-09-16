@@ -4,17 +4,25 @@ import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
-import io.flutter.embedding.engine.FlutterEngine
-import io.flutter.plugin.common.MethodChannel
 
+/**
+ * ============================================================
+ * MainActivity — النشاط الرئيسي للتطبيق
+ * ------------------------------------------------
+ * يرث من FlutterActivity (الإصدار الحديث v2).
+ * ⚠️ مهم: لا ترث من io.flutter.app.FlutterActivity (محذوف).
+ * ============================================================
+ */
 class MainActivity : FlutterActivity() {
-
-    private val channelName = "com.lanphone.app/native"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // ============================================
+        // === إعدادات النافذة لشاشة المكالمة ===
+        // ============================================
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            // Android 8.1+
             setShowWhenLocked(true)
             setTurnScreenOn(true)
         } else {
@@ -24,28 +32,8 @@ class MainActivity : FlutterActivity() {
                         or WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
             )
         }
-    }
 
-    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
-        super.configureFlutterEngine(flutterEngine)
-
-        // قناة للتحكم في الشاشة من Dart
-        MethodChannel(
-            flutterEngine.dartExecutor.binaryMessenger,
-            channelName
-        ).setMethodCallHandler { call, result ->
-            when (call.method) {
-                "keepScreenOn" -> {
-                    val enable = call.argument<Boolean>("enable") ?: false
-                    if (enable) {
-                        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                    } else {
-                        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                    }
-                    result.success(true)
-                }
-                else -> result.notImplemented()
-            }
-        }
+        // إبقاء الشاشة مضاءة أثناء المكالمة
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
 }
