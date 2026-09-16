@@ -1,7 +1,8 @@
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:permission_handler/permission_handler.dart';
+import 'package:permission_handler/permission_handler.dart'
+    as ph; // ← استيراد مُسمّى لتجنب التعارض
 
 /// ============================================================
 /// خدمة إدارة الأذونات
@@ -15,47 +16,43 @@ class PermissionService {
   // ============================================
 
   /// أذونات لاكتشاف الأجهزة على الشبكة المحلية
-  static List<Permission> get _discoveryPermissions {
-    final list = <Permission>[
-      Permission.locationWhenInUse,
-      Permission.nearbyWifiDevices,
+  static List<ph.Permission> get _discoveryPermissions {
+    return <ph.Permission>[
+      ph.Permission.locationWhenInUse,
+      ph.Permission.nearbyWifiDevices,
     ];
-
-    // multicast يحتاج CHANGE_WIFI_MULTICAST_STATE (لا يوجد enum مباشر)
-    // نتعامل معه في AndroidManifest فقط
-    return list;
   }
 
   /// أذونات المكالمات الصوتية
-  static List<Permission> get _audioCallPermissions => [
-        Permission.microphone,
-        Permission.bluetoothConnect,
+  static List<ph.Permission> get _audioCallPermissions => [
+        ph.Permission.microphone,
+        ph.Permission.bluetoothConnect,
       ];
 
   /// أذونات مكالمات الفيديو
-  static List<Permission> get _videoCallPermissions => [
-        Permission.microphone,
-        Permission.camera,
-        Permission.bluetoothConnect,
+  static List<ph.Permission> get _videoCallPermissions => [
+        ph.Permission.microphone,
+        ph.Permission.camera,
+        ph.Permission.bluetoothConnect,
       ];
 
   /// أذونات الوسائط والملفات
-  static List<Permission> get _mediaPermissions {
+  static List<ph.Permission> get _mediaPermissions {
     // Android 13+ يستخدم أذونات منفصلة للصور/الفيديو/الصوت
     if (Platform.isAndroid) {
       return [
-        Permission.photos,
-        Permission.videos,
-        Permission.audio,
-        Permission.storage,
+        ph.Permission.photos,
+        ph.Permission.videos,
+        ph.Permission.audio,
+        ph.Permission.storage,
       ];
     }
-    return [Permission.photos, Permission.storage];
+    return [ph.Permission.photos, ph.Permission.storage];
   }
 
   /// أذونات الإشعارات
-  static List<Permission> get _notificationPermissions => [
-        Permission.notification,
+  static List<ph.Permission> get _notificationPermissions => [
+        ph.Permission.notification,
       ];
 
   // ============================================
@@ -64,14 +61,12 @@ class PermissionService {
 
   /// طلب مجموعة أذونات دفعة واحدة
   /// يُرجع true إذا مُنحت كل الأذونات
-  static Future<bool> requestAll(List<Permission> permissions) async {
+  static Future<bool> requestAll(List<ph.Permission> permissions) async {
     if (!Platform.isAndroid && !Platform.isIOS) return true;
 
     try {
-      // نطلب كل الأذونات دفعة واحدة
       final statuses = await permissions.request();
 
-      // نتحقق: هل كل الأذونات المقبولة مُمنوحة؟
       for (final status in statuses.values) {
         if (!status.isGranted && !status.isLimited) {
           return false;
@@ -85,7 +80,7 @@ class PermissionService {
   }
 
   /// فحص هل كل الأذونات مُمنوحة (بدون طلب)
-  static Future<bool> checkAll(List<Permission> permissions) async {
+  static Future<bool> checkAll(List<ph.Permission> permissions) async {
     if (!Platform.isAndroid && !Platform.isIOS) return true;
 
     try {
@@ -131,8 +126,7 @@ class PermissionService {
     return requestAll(_notificationPermissions);
   }
 
-  /// طلب **كل** الأذونات دفعة واحدة (عند أول تشغيل)
-  /// نطلب الأساسية أولًا ثم الكمالية
+  /// طلب الأذونات الأساسية عند أول تشغيل
   static Future<PermissionSummary> requestEssentialAtStartup() async {
     final discoveryOk = await requestDiscovery();
     final notificationsOk = await requestNotifications();
@@ -151,12 +145,12 @@ class PermissionService {
   // ============================================
 
   static Future<bool> hasMicPermission() async {
-    final s = await Permission.microphone.status;
+    final s = await ph.Permission.microphone.status;
     return s.isGranted;
   }
 
   static Future<bool> hasCameraPermission() async {
-    final s = await Permission.camera.status;
+    final s = await ph.Permission.camera.status;
     return s.isGranted;
   }
 
@@ -173,9 +167,8 @@ class PermissionService {
   // ============================================
 
   /// هل أحد الأذونات "مرفوض نهائيًا"؟
-  /// (يعني: المستخدم اختار "لا تسأل مجددًا")
   static Future<bool> isPermanentlyDenied(
-    List<Permission> permissions,
+    List<ph.Permission> permissions,
   ) async {
     for (final p in permissions) {
       final status = await p.status;
@@ -185,18 +178,23 @@ class PermissionService {
   }
 
   /// فتح إعدادات التطبيق (لتفعيل الأذونات المرفوضة نهائيًا)
+  /// ✅ الآن تعمل بشكل صحيح — تستدعي دالة permission_handler الأصلية
   static Future<bool> openAppSettings() async {
-    return openAppSettings();
+    try {
+      return await ph.openAppSettings();
+    } catch (e) {
+      debugPrint('[Permissions] openAppSettings error: $e');
+      return false;
+    }
   }
 
   // ============================================
   // === طلب ذكي مع إرشاد المستخدم ===
   // ============================================
 
-  /// طلب أذونات مع عرض حالة مخصّصة
-  /// إذا رُفضت نهائيًا، يُوجّه المستخدم للإعدادات
+  /// طلب أذونات مع نتيجة واضحة (للعرض في واجهة)
   static Future<PermissionResult> requestWithGuidance(
-    List<Permission> permissions,
+    List<ph.Permission> permissions,
     String reason,
   ) async {
     // 1) هل مُمنوحة أصلًا؟
