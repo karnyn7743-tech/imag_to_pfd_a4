@@ -1,7 +1,7 @@
 plugins {
     id("com.android.application")
     id("kotlin-android")
-    // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
+    // يجب تطبيق Flutter Gradle Plugin بعد Android و Kotlin
     id("dev.flutter.flutter-gradle-plugin")
 }
 
@@ -21,7 +21,7 @@ android {
     ndkVersion = "27.0.12077973"
 
     // ============================================================
-    // === إصدارات التطبيق ===
+    // === إصدارات Java و Kotlin ===
     // ============================================================
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -36,12 +36,11 @@ android {
     // === الإعدادات الافتراضية ===
     // ============================================================
     defaultConfig {
-        // معرّف التطبيق (يجب أن يكون فريدًا)
+        // معرّف التطبيق (يجب أن يطابق namespace)
         applicationId = "com.lanphone.app"
 
         // الحد الأدنى لإصدار أندرويد المدعوم
         // 23 = Android 6.0 (Marshmallow)
-        // مطلوب لـ flutter_webrtc و image_picker الحديثين
         minSdk = 23
 
         // الإصدار المستهدف (مطلوب لـ Google Play)
@@ -51,8 +50,11 @@ android {
         versionCode = flutter.versionCode
         versionName = flutter.versionName
 
-        // دعم Dex المتعدد (لأن عدد الدوال > 64k)
+        // دعم Dex المتعدد (لأن عدد الدوال > 64k بسبب WebRTC)
         multiDexEnabled = true
+
+        // ⚠️ مهم: لا تضف manifestPlaceholders هنا
+        // Flutter 3.29+ يتولى applicationName تلقائيًا
     }
 
     // ============================================================
@@ -81,9 +83,9 @@ android {
     }
 
     // ============================================================
-    // === إعدادات إضافية ===
+    // === إعدادات الحزم ===
     // ============================================================
-    // لحل مشاكل تعارض بعض المكتبات
+    // لحل مشاكل تعارض بعض المكتبات (WebRTC + غيرها)
     packaging {
         resources {
             excludes += setOf(
@@ -93,7 +95,9 @@ android {
                 "META-INF/NOTICE",
                 "META-INF/NOTICE.txt",
                 "META-INF/AL2.0",
-                "META-INF/LGPL2.1"
+                "META-INF/LGPL2.1",
+                "META-INF/INDEX.LIST",
+                "META-INF/*.kotlin_module"
             )
         }
     }
@@ -101,7 +105,7 @@ android {
     // ============================================================
     // === التعامل مع مشاكل البناء ===
     // ============================================================
-    // تجاهل تعارضات الإصدارات في المكتبات
+    // تعطيل فحص lint الصارم (لتجنب فشل البناء بسبب تحذيرات)
     lint {
         checkReleaseBuilds = false
         abortOnError = false
