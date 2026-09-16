@@ -1,4 +1,4 @@
-name: lan_phone
+Name: lan_phone
 description: "تطبيق مراسلة ومكالمات صوتية ومرئية عبر شبكة الواي فاي المحلية فقط، بدون إنترنت أو شبكات اتصالات."
 publish_to: 'none'
 version: 1.0.0+1
@@ -14,8 +14,6 @@ dependencies:
   # ============================================
   # === دعم التوطين (العربية) ===
   # ============================================
-  # ⚠️ مطلوب لـ GlobalMaterialLocalizations
-  # واستخدام DateFormat بالعربية
   flutter_localizations:
     sdk: flutter
 
@@ -32,11 +30,9 @@ dependencies:
   # ============================================
   # === الشبكة المحلية (LAN) ===
   # ============================================
-  # WebSocket للتحكم (Signaling) بين الأجهزة
   web_socket_channel: ^3.0.1
-  # mDNS/Bonjour لاكتشاف الأجهزة على نفس الشبكة
-  multicast_dns: ^0.3.2+7
-  # ملاحظة: UDP Broadcast نستخدم لها dart:io المدمجة (RawDatagramSocket)
+  # تم تحديث الحزمة إلى أحدث إصدار مستقر يتوافق مع v2 embedding
+  multicast_dns: ^0.3.7
 
   # ============================================
   # === WebRTC (المكالمات الصوتية والفيديو) ===
@@ -83,7 +79,8 @@ dependencies:
   # === الصوت ===
   # ============================================
   audio_session: ^0.1.21
-  flutter_ringtone_player: ^4.0.0+3
+  # تم التحديث إلى أحدث إصدار مستقر متوافق
+  flutter_ringtone_player: ^4.0.1
 
   # ============================================
   # === أدوات مساعدة ===
@@ -106,7 +103,6 @@ dev_dependencies:
 flutter:
   uses-material-design: true
 
-  # الأصول (assets)
   assets:
     - assets/sounds/
     - assets/icons/
