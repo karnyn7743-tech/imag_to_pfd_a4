@@ -1,17 +1,111 @@
-# my_first_app
+# LanPhone 📱
 
-A new Flutter project.
+> **تطبيق مراسلة ومكالمات صوتية ومرئية عبر شبكة الواي فاي المحلية فقط**
+>
+> بدون إنترنت. بدون شبكات اتصالات. بدون سيرفرات خارجية.
 
-## Getting Started
+---
 
-This project is a starting point for a Flutter application.
+<div align="center">
 
-A few resources to get you started if this is your first Flutter project:
+![Flutter](https://img.shields.io/badge/Flutter-3.24+-02569B?logo=flutter)
+![Dart](https://img.shields.io/badge/Dart-3.5+-0175C2?logo=dart)
+![Android](https://img.shields.io/badge/Android-6.0+-3DDC84?logo=android)
+![WebRTC](https://img.shields.io/badge/WebRTC-Opus%20%2B%20VP8-333333?logo=webrtc)
+![License](https://img.shields.io/badge/License-MIT-yellow.svg)
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+</div>
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+---
+
+## 🌟 نظرة عامة
+
+**LanPhone** هو تطبيق أندرويد مفتوح المصدر يتيح التواصل الكامل بين الأجهزة المتصلة على **نفس شبكة الواي فاي المحلية**، دون الحاجة إلى:
+- ❌ إنترنت
+- ❌ شبكة اتصالات (GSM/CDMA)
+- ❌ سيرفر مركزي
+- ❌ تسجيل أو حساب
+
+يعمل التطبيق بنمط **Peer-to-Peer** مباشر بين الأجهزة، مما يضمن:
+- ✅ خصوصية تامة
+- ✅ سرعة عالية (LAN speed)
+- ✅ استقلالية كاملة عن الإنترنت
+
+---
+
+## ✨ الميزات
+
+### 📨 المراسلة
+- رسائل نصية فورية
+- إرسال الصور والفيديو والملفات (حتى 100 MB)
+- إيصالات التسليم والقراءة (✓ / ✓✓)
+- الرد على رسائل محددة
+- تخزين محلي مشفر
+
+### 📞 المكالمات الصوتية
+- **جودة صوت قريبة من GSM** (Opus @ 8 kHz)
+- إلغاء الصدى (AEC) + إزالة الضجيج (NS) + تحكم تلقائي بالمستوى (AGC)
+- كتم الميكروفون
+- مكبر الصوت
+- تشفير DTLS-SRTP إلزامي
+
+### 🎥 مكالمات الفيديو
+- فيديو عالي الجودة (VP8)
+- نافذة الفيديو المحلي القابلة للسحب (PiP)
+- تبديل بين الكاميرا الأمامية والخلفية
+- تعطيل الفيديو مؤقتًا
+- تعديل الجودة تلقائيًا حسب الشبكة
+
+### 🔍 الاكتشاف
+- اكتشاف تلقائي للأجهزة على نفس الشبكة
+- UDP Broadcast + mDNS (طريقتان للاكتشاف)
+- عرض الأجهزة المتصلة والسابقة
+
+### 🔐 الأمان
+- **لا يوجد اتصال بالإنترنت** إطلاقًا
+- تشفير WebRTC (DTLS-SRTP) للمكالمات
+- تخزين محلي مشفر (SQLCipher - قابل للتفعيل)
+- رفض الاتصال بأي عنوان IP غير محلي
+
+---
+
+## 📸 لقطات الشاشة
+
+> *(أضف صورك هنا بعد تشغيل التطبيق)*
+
+| المحادثات | المكالمة الصوتية | مكالمة الفيديو |
+|:---:|:---:|:---:|
+| ![المحادثات](docs/screenshots/conversations.png) | ![المكالمة](docs/screenshots/audio_call.png) | ![الفيديو](docs/screenshots/video_call.png) |
+
+| الأجهزة | الدردشة | المكالمة الواردة |
+|:---:|:---:|:---:|
+| ![الأجهزة](docs/screenshots/devices.png) | ![الدردشة](docs/screenshots/chat.png) | ![الواردة](docs/screenshots/incoming_call.png) |
+
+---
+
+## 🚀 التثبيت
+
+### المتطلبات
+- **Flutter SDK**: 3.24.0 أو أحدث
+- **Android SDK**: API 34 (Android 14)
+- **NDK**: 27.0.12077973
+- **Java**: JDK 17
+
+### الخطوات
+
+```bash
+# 1) استنساخ المشروع
+git clone https://github.com/YOUR_USERNAME/lan_phone.git
+cd lan_phone
+
+# 2) تنظيف المشروع (يُنصح به لأول مرة)
+flutter clean
+
+# 3) تنزيل الحزم
+flutter pub get
+
+# 4) التحقق من عدم وجود أخطاء
+flutter analyze
+
+# 5) تشغيل التطبيق
+flutter run
