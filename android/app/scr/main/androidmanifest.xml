@@ -33,7 +33,7 @@
         tools:targetApi="s" />
 
     <!-- ============================================================ -->
-    <!-- === إدارة المكالمات (لإظهار شاشة المكالمة فوق غيرها) ===      -->
+    <!-- === إدارة المكالمات (شاشة فوق القفل) ===                      -->
     <!-- ============================================================ -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
@@ -46,15 +46,18 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE"
         tools:targetApi="q" />
 
-    <!-- لبدء الخدمة عند الإقلاع (اختياري) -->
-    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-
     <!-- ============================================================ -->
-    <!-- === الإشعارات ===                                             -->
+    <!-- === الإشعارات (flutter_local_notifications) ===              -->
     <!-- ============================================================ -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"
         tools:targetApi="tiramisu" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!-- لأندرويد 12+ (جدولة إشعارات دقيقة) -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <!-- لأندرويد 13+ (بديل دقيق للجدولة) -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
 
     <!-- ============================================================ -->
     <!-- === الملفات والوسائط ===                                      -->
@@ -66,6 +69,9 @@
         tools:targetApi="tiramisu" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO"
         tools:targetApi="tiramisu" />
+    <!-- لأندرويد 14+ (وصول جزئي للصور) -->
+    <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED"
+        tools:targetApi="upside_down_cake" />
 
     <!-- للأندرويد الأقدم -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
@@ -74,7 +80,7 @@
         android:maxSdkVersion="28" />
 
     <!-- ============================================================ -->
-    <!-- === ميزات الأجهزة (اختياري، لتحديد متطلبات الأجهزة) ===     -->
+    <!-- === ميزات الأجهزة ===                                         -->
     <!-- ============================================================ -->
     <uses-feature
         android:name="android.hardware.camera"
@@ -120,7 +126,6 @@
             android:showWhenLocked="true"
             android:turnScreenOn="true">
 
-            <!-- شاشة البداية (Flutter) -->
             <meta-data
                 android:name="io.flutter.embedding.android.NormalTheme"
                 android:resource="@style/NormalTheme" />
@@ -139,8 +144,65 @@
             android:value="2" />
 
         <!-- ============================================ -->
-        <!-- === خدمة المكالمات في المقدمة (Foreground) == -->
+        <!-- === مستقبلات flutter_local_notifications === -->
+        <!-- مطلوبة لعرض الإشعارات والجدولة ===          -->
         <!-- ============================================ -->
+        <receiver
+            android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver"
+            android:exported="false" />
+
+        <receiver
+            android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name="com.dexterous.flutterlocalnotifications.ActionBroadcastReceiver"
+            android:exported="false" />
+
+        <!-- ============================================ -->
+        <!-- === Queries (Android 11+) ===                -->
+        <!-- مهمة لـ image_picker و file_picker ===      -->
+        <!-- ============================================ -->
+        <queries>
+            <!-- لفتح الكاميرا -->
+            <intent>
+                <action android:name="android.media.action.IMAGE_CAPTURE" />
+            </intent>
+
+            <!-- لاختيار المحتوى (file_picker) -->
+            <intent>
+                <action android:name="android.intent.action.GET_CONTENT" />
+            </intent>
+
+            <!-- لفتح المستندات (file_picker) -->
+            <intent>
+                <action android:name="android.intent.action.OPEN_DOCUMENT" />
+            </intent>
+
+            <!-- لاختيار مجلد (file_picker) -->
+            <intent>
+                <action android:name="android.intent.action.OPEN_DOCUMENT_TREE" />
+            </intent>
+
+            <!-- لفتح المتصفح -->
+            <intent>
+                <action android:name="android.intent.action.VIEW" />
+                <data android:scheme="https" />
+            </intent>
+        </queries>
+
+        <!-- ============================================ -->
+        <!-- === خدمات Flutter (تُنشأ لاحقًا في Kotlin) === -->
+        <!-- نُبقيها معطّلة حتى نكتب الكود الخاص بها ===  -->
+        <!-- ============================================ -->
+        <!--
         <service
             android:name=".CallForegroundService"
             android:enabled="true"
@@ -148,9 +210,6 @@
             android:foregroundServiceType="microphone|camera|connectedDevice"
             tools:targetApi="q" />
 
-        <!-- ============================================ -->
-        <!-- === خدمة الاكتشاف المستمرة (اختياري) ===     -->
-        <!-- ============================================ -->
         <service
             android:name=".DiscoveryForegroundService"
             android:enabled="true"
@@ -158,9 +217,6 @@
             android:foregroundServiceType="connectedDevice"
             tools:targetApi="q" />
 
-        <!-- ============================================ -->
-        <!-- === مستقبِل الإقلاع (اختياري) ===            -->
-        <!-- ============================================ -->
         <receiver
             android:name=".BootReceiver"
             android:enabled="false"
@@ -169,25 +225,7 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
-
-        <!-- ============================================ -->
-        <!-- === Queries (للأندرويد 11+) ===              -->
-        <!-- ============================================ -->
-        <queries>
-            <!-- للتطبيقات التي تفتح الكاميرا -->
-            <intent>
-                <action android:name="android.media.action.IMAGE_CAPTURE" />
-            </intent>
-            <!-- لفتح الملفات -->
-            <intent>
-                <action android:name="android.intent.action.GET_CONTENT" />
-            </intent>
-            <!-- لفتح المتصفح (للمساعدة) -->
-            <intent>
-                <action android:name="android.intent.action.VIEW" />
-                <data android:scheme="https" />
-            </intent>
-        </queries>
+        -->
 
     </application>
 
