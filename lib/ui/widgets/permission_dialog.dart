@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:permission_handler/permission_handler.dart';
+import 'package:permission_handler/permission_handler.dart' as ph;
 
 import '../../core/services/permission_service.dart';
 
@@ -13,7 +13,7 @@ class PermissionDialog {
   /// يُرجع true إذا مُنح الإذن
   static Future<bool> ensure(
     BuildContext context, {
-    required List<Permission> permissions,
+    required List<ph.Permission> permissions,
     required String title,
     required String message,
     required IconData icon,
@@ -52,7 +52,7 @@ class PermissionDialog {
       );
 
       if (open == true) {
-        await openAppSettings();
+        await PermissionService.openAppSettings();
       }
       return false;
     } else {
