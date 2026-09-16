@@ -1,8 +1,12 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
+import 'package:permission_handler/permission_handler.dart' as ph;
 import 'package:provider/provider.dart';
 
 import '../../core/constants.dart';
@@ -11,6 +15,7 @@ import '../../core/discovery/discovered_device.dart';
 import '../../core/messaging/message_service.dart';
 import '../../data/database/database_helper.dart';
 import '../theme/app_theme.dart';
+import '../widgets/permission_dialog.dart';
 import 'audio_call_screen.dart';
 import 'video_call_screen.dart';
 
@@ -45,6 +50,7 @@ class _ChatScreenState extends State<ChatScreen> {
   String? _replyToId;
   Map<String, dynamic>? _replyToMessage;
   bool _canSend = false;
+  bool _isSendingMedia = false;
 
   late String _conversationId;
 
@@ -71,13 +77,8 @@ class _ChatScreenState extends State<ChatScreen> {
         widget.peer.deviceId,
       );
 
-      // استمع لأحداث الرسائل
       _eventSub = _messageService!.events.listen(_onMessageEvent);
-
-      // حمّل الرسائل
       await _loadMessages();
-
-      // علّم كقراءة
       await _messageService!.markConversationAsRead(widget.peer.deviceId);
     });
   }
@@ -125,7 +126,6 @@ class _ChatScreenState extends State<ChatScreen> {
       case MessageEventType.sent:
       case MessageEventType.ack:
         _loadMessages();
-        // علّم كقراءة عند الاستقبال والتفعيل
         if (event.type == MessageEventType.received) {
           _messageService?.markConversationAsRead(widget.peer.deviceId);
         }
@@ -176,18 +176,8 @@ class _ChatScreenState extends State<ChatScreen> {
     _scrollToBottom();
   }
 
-  Future<void> _pickAndSendMedia(String type) async {
-    // سنستخدم file_picker لإرسال أي نوع
-    // لكن لتبسيط البداية، سنستخدم منتقي بسيط
-    // يمكن لاحقًا توسيعه بـ image_picker
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('اختيار الوسائط سيُضاف في المرحلة التالية'),
-      ),
-    );
-  }
-
   void _startReply(Map<String, dynamic> message) {
+    HapticFeedback.lightImpact();
     setState(() {
       _replyToId = message['message_id'] as String;
       _replyToMessage = message;
@@ -203,11 +193,128 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   // ============================================
+  // === اختيار وإرسال الوسائط ===
+  // ============================================
+
+  Future<void> _pickAndSendMedia(String mediaType) async {
+    if (_isSendingMedia) return;
+
+    // اطلب الأذونات المناسبة
+    final permissions = mediaType == AppConstants.mediaImage
+        ? <ph.Permission>[ph.Permission.photos]
+        : mediaType == AppConstants.mediaVideo
+            ? <ph.Permission>[ph.Permission.videos]
+            : <ph.Permission>[ph.Permission.storage];
+
+    final granted = await PermissionDialog.ensure(
+      context,
+      permissions: permissions,
+      title: 'الوصول للوسائط',
+      message: 'نحتاج الإذن لإرسال الملفات',
+      icon: Icons.photo_library_outlined,
+    );
+
+    if (!granted || !mounted) return;
+
+    String? pickedPath;
+
+    try {
+      if (mediaType == AppConstants.mediaImage) {
+        pickedPath = await _pickImage();
+      } else if (mediaType == AppConstants.mediaVideo) {
+        pickedPath = await _pickVideo();
+      } else {
+        pickedPath = await _pickFile();
+      }
+    } catch (e) {
+      _showError('تعذّر اختيار الملف');
+      return;
+    }
+
+    if (pickedPath == null || !mounted) return;
+
+    setState(() => _isSendingMedia = true);
+
+    final replyId = _replyToId;
+    setState(() {
+      _replyToId = null;
+      _replyToMessage = null;
+    });
+
+    try {
+      final result = await _messageService!.sendMedia(
+        peerDeviceId: widget.peer.deviceId,
+        filePath: pickedPath,
+        mediaType: mediaType,
+        replyToId: replyId,
+      );
+
+      if (!result.ok && mounted) {
+        _showError(result.error ?? 'فشل الإرسال');
+      }
+
+      _scrollToBottom();
+    } catch (e) {
+      if (mounted) _showError('فشل الإرسال: $e');
+    } finally {
+      if (mounted) setState(() => _isSendingMedia = false);
+    }
+  }
+
+  Future<String?> _pickImage() async {
+    final picker = ImagePicker();
+    final XFile? file = await picker.pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 85,
+      maxWidth: 1920,
+    );
+    return file?.path;
+  }
+
+  Future<String?> _pickVideo() async {
+    final picker = ImagePicker();
+    final XFile? file = await picker.pickVideo(
+      source: ImageSource.gallery,
+      maxDuration: const Duration(minutes: 5),
+    );
+    return file?.path;
+  }
+
+  Future<String?> _pickFile() async {
+    final result = await FilePicker.platform.pickFiles(
+      allowMultiple: false,
+      type: FileType.any,
+    );
+    if (result == null || result.files.isEmpty) return null;
+    return result.files.first.path;
+  }
+
+  void _showError(String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        backgroundColor: AppTheme.errorColor,
+      ),
+    );
+  }
+
+  // ============================================
   // === المكالمات ===
   // ============================================
 
-  void _startAudioCall() {
-    Navigator.of(context).push(
+  Future<void> _startAudioCall() async {
+    // اطلب إذن الميكروفون
+    final granted = await PermissionDialog.ensure(
+      context,
+      permissions: <ph.Permission>[ph.Permission.microphone],
+      title: 'الميكروفون',
+      message: 'نحتاج الميكروفون لإجراء المكالمات الصوتية',
+      icon: Icons.mic,
+    );
+
+    if (!granted || !mounted) return;
+
+    await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => AudioCallScreen(
           peer: widget.peer,
@@ -217,8 +324,22 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  void _startVideoCall() {
-    Navigator.of(context).push(
+  Future<void> _startVideoCall() async {
+    // اطلب إذني الميكروفون والكاميرا
+    final granted = await PermissionDialog.ensure(
+      context,
+      permissions: <ph.Permission>[
+        ph.Permission.microphone,
+        ph.Permission.camera,
+      ],
+      title: 'الكاميرا والميكروفون',
+      message: 'نحتاجهما لإجراء مكالمات الفيديو',
+      icon: Icons.videocam,
+    );
+
+    if (!granted || !mounted) return;
+
+    await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => VideoCallScreen(
           peer: widget.peer,
@@ -288,7 +409,7 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
           PopupMenuButton<String>(
             onSelected: (v) {
-              // TODO: خيارات إضافية
+              // TODO: تنفيذ الخيارات لاحقًا
             },
             itemBuilder: (_) => const [
               PopupMenuItem(
@@ -382,7 +503,6 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Widget _buildMessagesList(bool isDark) {
-    // نعرض الرسائل من الأقدم للأحدث (نعكس لأن الترتيب في DB تنازلي)
     final items = _messages.reversed.toList();
 
     return ListView.builder(
@@ -531,9 +651,16 @@ class _ChatScreenState extends State<ChatScreen> {
           children: [
             // زر المرفقات
             IconButton(
-              icon: const Icon(Icons.add_circle_outline),
+              icon: _isSendingMedia
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.add_circle_outline),
               color: AppTheme.primaryColor,
-              onPressed: peerOnline ? () => _showAttachMenu() : null,
+              onPressed:
+                  (peerOnline && !_isSendingMedia) ? _showAttachMenu : null,
             ),
 
             // حقل النص
@@ -836,7 +963,7 @@ class _MessageBubble extends StatelessWidget {
                 // ============================================
                 // === محتوى الرسالة حسب النوع ===
                 // ============================================
-                _buildContent(isDark),
+                _buildContent(context, isDark),
 
                 // ============================================
                 // === شريط التقدم ===
@@ -902,50 +1029,30 @@ class _MessageBubble extends StatelessWidget {
     );
   }
 
-  Widget _buildContent(bool isDark) {
+  Widget _buildContent(BuildContext context, bool isDark) {
     final type = message['type'] as String?;
 
     switch (type) {
       case AppConstants.mediaImage:
-        return _buildMediaPreview('📷 صورة');
+        return _buildImagePreview();
 
       case AppConstants.mediaVideo:
-        return _buildMediaPreview('🎥 فيديو');
+        return _buildPlaceholderPreview(
+          icon: Icons.play_circle_outline,
+          label: 'فيديو',
+          color: Colors.red,
+        );
 
       case AppConstants.mediaAudio:
-        return _buildMediaPreview('🎵 مقطع صوتي');
+        return _buildPlaceholderPreview(
+          icon: Icons.play_arrow_rounded,
+          label: 'مقطع صوتي',
+          color: Colors.purple,
+        );
 
       case AppConstants.mediaFile:
         final fileName = message['file_name'] as String? ?? 'ملف';
-        return Padding(
-          padding: const EdgeInsets.all(10),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: AppTheme.primaryColor.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Icon(
-                  Icons.insert_drive_file_outlined,
-                  color: AppTheme.primaryColor,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Flexible(
-                child: Text(
-                  fileName,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 14),
-                ),
-              ),
-            ],
-          ),
-        );
+        return _buildFilePreview(fileName);
 
       case AppConstants.mediaText:
       default:
@@ -969,23 +1076,140 @@ class _MessageBubble extends StatelessWidget {
     }
   }
 
-  Widget _buildMediaPreview(String label) {
-    return Container(
-      width: 200,
-      height: 140,
-      margin: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.15),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      alignment: Alignment.center,
-      child: Text(
-        label,
-        style: const TextStyle(color: Colors.white, fontSize: 14),
+  // ============================================
+  // === معاينة الصورة ===
+  // ============================================
+  Widget _buildImagePreview() {
+    final filePath = message['file_path'] as String?;
+
+    if (filePath == null || !File(filePath).existsSync()) {
+      return _buildPlaceholderPreview(
+        icon: Icons.broken_image_outlined,
+        label: 'صورة',
+        color: Colors.grey,
+      );
+    }
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(10),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(
+          maxWidth: 260,
+          maxHeight: 320,
+          minWidth: 140,
+          minHeight: 100,
+        ),
+        child: Image.file(
+          File(filePath),
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => _buildPlaceholderPreview(
+            icon: Icons.broken_image_outlined,
+            label: 'تعذّر فتح الصورة',
+            color: Colors.grey,
+          ),
+        ),
       ),
     );
   }
 
+  // ============================================
+  // === معاينة فيديو/صوت (مؤقتة) ===
+  // ============================================
+  Widget _buildPlaceholderPreview({
+    required IconData icon,
+    required String label,
+    required Color color,
+  }) {
+    return Container(
+      width: 220,
+      height: 150,
+      margin: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, size: 40, color: color),
+          const SizedBox(height: 6),
+          Text(
+            label,
+            style: TextStyle(
+              color: color,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ============================================
+  // === معاينة ملف ===
+  // ============================================
+  Widget _buildFilePreview(String fileName) {
+    final ext = fileName.contains('.')
+        ? fileName.split('.').last.toUpperCase()
+        : 'FILE';
+
+    return Padding(
+      padding: const EdgeInsets.all(10),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: AppTheme.primaryColor.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            alignment: Alignment.center,
+            child: Text(
+              ext.length > 4 ? ext.substring(0, 4) : ext,
+              style: const TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.bold,
+                color: AppTheme.primaryColor,
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Flexible(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  fileName,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  'اضغط للفتح',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Colors.grey.shade600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ============================================
+  // === أيقونة الحالة ===
+  // ============================================
   Widget _statusIcon(String? status) {
     switch (status) {
       case 'pending':
