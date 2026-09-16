@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:permission_handler/permission_handler.dart' as ph;
 import 'package:provider/provider.dart';
 
 import '../../../core/discovery/device_discovery.dart';
@@ -40,7 +41,6 @@ class DevicesTab extends StatelessWidget {
         return RefreshIndicator(
           onRefresh: () async {
             discovery.refreshNow();
-            // انتظر قليلًا ثم أعِد
             await Future.delayed(const Duration(milliseconds: 800));
           },
           child: ListView(
@@ -356,13 +356,13 @@ class _DeviceTile extends StatelessWidget {
     BuildContext context, {
     required bool isVideo,
   }) async {
-    // اطلب الأذونات المناسبة
+    // ✅ استخدام ph.Permission بدل Permission
     final permissions = isVideo
-        ? [
-            Permission.microphone,
-            Permission.camera,
+        ? <ph.Permission>[
+            ph.Permission.microphone,
+            ph.Permission.camera,
           ]
-        : [Permission.microphone];
+        : <ph.Permission>[ph.Permission.microphone];
 
     final granted = await PermissionService.requestAll(permissions);
     if (!granted) {
