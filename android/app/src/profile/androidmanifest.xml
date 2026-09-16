@@ -1,0 +1,232 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- ============================================================ -->
+    <!-- === الأذونات الأساسية للشبكة المحلية (LAN) ===                -->
+    <!-- ============================================================ -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+
+    <!-- للحصول على IP الجهاز على شبكة الواي فاي -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
+    <!-- ============================================================ -->
+    <!-- === اكتشاف الأجهزة على الشبكة (UDP Broadcast + mDNS) ===      -->
+    <!-- ============================================================ -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <uses-permission
+        android:name="android.permission.NEARBY_WIFI_DEVICES"
+        android:usesPermissionFlags="neverForLocation"
+        tools:targetApi="tiramisu" />
+
+    <!-- ============================================================ -->
+    <!-- === المكالمات الصوتية والمرئية ===                            -->
+    <!-- ============================================================ -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.BLUETOOTH"
+        android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"
+        tools:targetApi="s" />
+
+    <!-- ============================================================ -->
+    <!-- === إدارة المكالمات (شاشة فوق القفل) ===                      -->
+    <!-- ============================================================ -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.DISABLE_KEYGUARD" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"
+        tools:targetApi="q" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA"
+        tools:targetApi="q" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE"
+        tools:targetApi="q" />
+
+    <!-- ============================================================ -->
+    <!-- === الإشعارات (flutter_local_notifications) ===              -->
+    <!-- ============================================================ -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"
+        tools:targetApi="tiramisu" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!-- لأندرويد 12+ (جدولة إشعارات دقيقة) -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <!-- لأندرويد 13+ (بديل دقيق للجدولة) -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+
+    <!-- ============================================================ -->
+    <!-- === الملفات والوسائط ===                                      -->
+    <!-- ============================================================ -->
+    <!-- للوصول للصور (Android 13+) -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"
+        tools:targetApi="tiramisu" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"
+        tools:targetApi="tiramisu" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO"
+        tools:targetApi="tiramisu" />
+    <!-- لأندرويد 14+ (وصول جزئي للصور) -->
+    <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED"
+        tools:targetApi="upside_down_cake" />
+
+    <!-- للأندرويد الأقدم -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+
+    <!-- ============================================================ -->
+    <!-- === ميزات الأجهزة ===                                         -->
+    <!-- ============================================================ -->
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.camera.autofocus"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.microphone"
+        android:required="true" />
+    <uses-feature
+        android:name="android.hardware.wifi"
+        android:required="true" />
+
+    <!-- ============================================================ -->
+    <!-- === التطبيق ===                                              -->
+    <!-- ============================================================ -->
+    <application
+        android:label="LanPhone"
+        android:name="${applicationName}"
+        android:icon="@mipmap/ic_launcher"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:usesCleartextTraffic="true"
+        android:requestLegacyExternalStorage="true"
+        android:hardwareAccelerated="true"
+        android:allowBackup="false"
+        android:supportsRtl="true"
+        android:enableOnBackInvokedCallback="true"
+        tools:targetApi="34">
+
+        <!-- ============================================ -->
+        <!-- === النشاط الرئيسي ===                        -->
+        <!-- ============================================ -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:taskAffinity=""
+            android:theme="@style/LaunchTheme"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+            android:hardwareAccelerated="true"
+            android:windowSoftInputMode="adjustResize"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true">
+
+            <meta-data
+                android:name="io.flutter.embedding.android.NormalTheme"
+                android:resource="@style/NormalTheme" />
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- ============================================ -->
+        <!-- === إعدادات Flutter Embedding ===            -->
+        <!-- ============================================ -->
+        <meta-data
+            android:name="flutterEmbedding"
+            android:value="2" />
+
+        <!-- ============================================ -->
+        <!-- === مستقبلات flutter_local_notifications === -->
+        <!-- مطلوبة لعرض الإشعارات والجدولة ===          -->
+        <!-- ============================================ -->
+        <receiver
+            android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver"
+            android:exported="false" />
+
+        <receiver
+            android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name="com.dexterous.flutterlocalnotifications.ActionBroadcastReceiver"
+            android:exported="false" />
+
+        <!-- ============================================ -->
+        <!-- === Queries (Android 11+) ===                -->
+        <!-- مهمة لـ image_picker و file_picker ===      -->
+        <!-- ============================================ -->
+        <queries>
+            <!-- لفتح الكاميرا -->
+            <intent>
+                <action android:name="android.media.action.IMAGE_CAPTURE" />
+            </intent>
+
+            <!-- لاختيار المحتوى (file_picker) -->
+            <intent>
+                <action android:name="android.intent.action.GET_CONTENT" />
+            </intent>
+
+            <!-- لفتح المستندات (file_picker) -->
+            <intent>
+                <action android:name="android.intent.action.OPEN_DOCUMENT" />
+            </intent>
+
+            <!-- لاختيار مجلد (file_picker) -->
+            <intent>
+                <action android:name="android.intent.action.OPEN_DOCUMENT_TREE" />
+            </intent>
+
+            <!-- لفتح المتصفح -->
+            <intent>
+                <action android:name="android.intent.action.VIEW" />
+                <data android:scheme="https" />
+            </intent>
+        </queries>
+
+        <!-- ============================================ -->
+        <!-- === خدمات Flutter (تُنشأ لاحقًا في Kotlin) === -->
+        <!-- نُبقيها معطّلة حتى نكتب الكود الخاص بها ===  -->
+        <!-- ============================================ -->
+        <!--
+        <service
+            android:name=".CallForegroundService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="microphone|camera|connectedDevice"
+            tools:targetApi="q" />
+
+        <service
+            android:name=".DiscoveryForegroundService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice"
+            tools:targetApi="q" />
+
+        <receiver
+            android:name=".BootReceiver"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+        -->
+
+    </application>
+
+</manifest>
