@@ -5,6 +5,7 @@ import '../../core/constants.dart';
 import '../../core/discovery/device_discovery.dart';
 import '../../core/services/permission_service.dart';
 import '../theme/app_theme.dart';
+import 'settings_screen.dart';
 import 'tabs/conversations_tab.dart';
 import 'tabs/devices_tab.dart';
 import 'tabs/calls_tab.dart';
@@ -94,12 +95,8 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   void _openSettings() {
-    // سنجعلها تنتقل لتبويب الأجهزة كمكان افتراضي
-    // أو نُنشئ شاشة إعدادات لاحقًا
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('شاشة الإعدادات ستُضاف في إصدار لاحق'),
-      ),
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const SettingsScreen()),
     );
   }
 
@@ -121,8 +118,6 @@ class _HomeScreenState extends State<HomeScreen>
     final discovery = context.watch<DeviceDiscovery>();
     final onlineCount = discovery.onlineDevices.length;
 
-    // عدد المحادثات غير المقروءة
-    // (نعرضه ديناميكيًا عبر Consumer لتحديثه مع أي تغيير)
     return Scaffold(
       appBar: AppBar(
         title: const Text(AppConstants.appName),
