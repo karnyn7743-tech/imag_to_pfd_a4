@@ -15,7 +15,7 @@ android {
     // === إصدارات SDK ===
     // ============================================================
     // إصدار SDK المستخدم للبناء
-    compileSdk = 34
+    compileSdk = 36
 
     // إصدار NDK المطلوب (مهم لـ flutter_webrtc)
     ndkVersion = "27.0.12077973"
@@ -44,7 +44,7 @@ android {
         minSdk = 23
 
         // الإصدار المستهدف (مطلوب لـ Google Play)
-        targetSdk = 34
+        targetSdk = 36
 
         // رقم إصدار التطبيق واسمه
         versionCode = flutter.versionCode
