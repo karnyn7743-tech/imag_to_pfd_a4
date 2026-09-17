@@ -3,8 +3,10 @@ import 'package:provider/provider.dart';
 
 import '../../core/constants.dart';
 import '../../core/discovery/device_discovery.dart';
+import '../../core/services/broadcast_service.dart';
 import '../../core/services/permission_service.dart';
 import '../theme/app_theme.dart';
+import 'broadcast_screen.dart';
 import 'dialer_screen.dart';
 import 'global_search_screen.dart';
 import 'qr_display_screen.dart';
@@ -73,14 +75,22 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   // ============================================
-  // === البحث العالمي (جديد) ===
+  // === البث الصوتي (جديد) ===
+  // ============================================
+
+  void _openBroadcast() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const BroadcastScreen()),
+    );
+  }
+
+  // ============================================
+  // === البحث العالمي ===
   // ============================================
 
   void _openGlobalSearch() {
     Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => const GlobalSearchScreen(),
-      ),
+      MaterialPageRoute(builder: (_) => const GlobalSearchScreen()),
     );
   }
 
@@ -217,12 +227,91 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   // ============================================
+  // === قائمة إضافية ===
+  // ============================================
+
+  void _showMoreMenu() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        decoration: BoxDecoration(
+          color: isDark ? AppTheme.darkSurface : Colors.white,
+          borderRadius: const BorderRadius.vertical(
+            top: Radius.circular(24),
+          ),
+        ),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 12),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade400,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              ListTile(
+                leading: const Icon(
+                  Icons.podcasts,
+                  color: AppTheme.primaryColor,
+                ),
+                title: const Text('البث الصوتي المباشر'),
+                subtitle: const Text('ابث صوتك لكل الأجهزة'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _openBroadcast();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.dialpad),
+                title: const Text('الاتصال برقم'),
+                subtitle: const Text('اتصل بجهاز عبر رقمه'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _openDialer();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.qr_code_2),
+                title: const Text('الاقتران بـ QR'),
+                subtitle: const Text('عرض/مسح رمز الاقتران'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _showQrOptions();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.settings_outlined),
+                title: const Text('الإعدادات'),
+                subtitle: const Text('إعدادات التطبيق'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _openSettings();
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ============================================
   // === الواجهة ===
   // ============================================
 
   @override
   Widget build(BuildContext context) {
     final discovery = context.watch<DeviceDiscovery>();
+    final broadcast = context.watch<BroadcastService>();
     final onlineCount = discovery.onlineDevices.length;
     final myNumber = discovery.deviceNumber;
 
@@ -293,29 +382,57 @@ class _HomeScreenState extends State<HomeScreen>
           ],
         ),
         actions: [
-          // ✅ زر البحث العالمي (جديد)
+          // البحث
           IconButton(
             icon: const Icon(Icons.search),
-            tooltip: 'البحث في الرسائل',
+            tooltip: 'البحث',
             onPressed: _openGlobalSearch,
           ),
-          // زر لوحة الاتصال
-          IconButton(
-            icon: const Icon(Icons.dialpad),
-            tooltip: 'الاتصال برقم',
-            onPressed: _openDialer,
+
+          // ✅ البث الصوتي (مع شارة حمراء إذا كان نشطًا)
+          Stack(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.podcasts),
+                tooltip: 'البث الصوتي',
+                onPressed: _openBroadcast,
+              ),
+              if (broadcast.isBroadcasting)
+                Positioned(
+                  top: 8,
+                  right: 8,
+                  child: Container(
+                    width: 10,
+                    height: 10,
+                    decoration: BoxDecoration(
+                      color: AppTheme.errorColor,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 1.5),
+                    ),
+                  ),
+                ),
+              if (broadcast.isListening)
+                Positioned(
+                  top: 8,
+                  right: 8,
+                  child: Container(
+                    width: 10,
+                    height: 10,
+                    decoration: BoxDecoration(
+                      color: AppTheme.successColor,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 1.5),
+                    ),
+                  ),
+                ),
+            ],
           ),
-          // قائمة QR
+
+          // قائمة إضافية
           IconButton(
-            icon: const Icon(Icons.qr_code_2),
-            tooltip: 'الاقتران بـ QR',
-            onPressed: _showQrOptions,
-          ),
-          // الإعدادات
-          IconButton(
-            icon: const Icon(Icons.settings_outlined),
-            tooltip: 'الإعدادات',
-            onPressed: _openSettings,
+            icon: const Icon(Icons.more_vert),
+            tooltip: 'المزيد',
+            onPressed: _showMoreMenu,
           ),
         ],
       ),
