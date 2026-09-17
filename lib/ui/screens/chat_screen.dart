@@ -29,7 +29,14 @@ import 'video_player_screen.dart';
 class ChatScreen extends StatefulWidget {
   final DiscoveredDevice peer;
 
-  const ChatScreen({super.key, required this.peer});
+  /// معرّف رسالة لفتحها مباشرة والتمرير إليها (من إشعار أو بحث)
+  final String? highlightMessageId;
+
+  const ChatScreen({
+    super.key,
+    required this.peer,
+    this.highlightMessageId,
+  });
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -43,6 +50,10 @@ class _ChatScreenState extends State<ChatScreen> {
   final ScrollController _scrollController = ScrollController();
   final FocusNode _inputFocus = FocusNode();
 
+  // ✅ للبحث
+  final TextEditingController _searchController = TextEditingController();
+  final FocusNode _searchFocus = FocusNode();
+
   MessageService? _messageService;
   StreamSubscription<MessageEvent>? _eventSub;
 
@@ -50,17 +61,25 @@ class _ChatScreenState extends State<ChatScreen> {
   // === الحالة ===
   // ============================================
   List<Map<String, dynamic>> _messages = [];
+  List<Map<String, dynamic>> _filteredMessages = [];
   bool _isLoading = true;
   String? _replyToId;
   Map<String, dynamic>? _replyToMessage;
   bool _canSend = false;
   bool _isSendingMedia = false;
 
-  // ✅ حالة التسجيل الصوتي
+  // ✅ حالة البحث
+  bool _isSearching = false;
+  String _searchQuery = '';
+
+  // ✅ حالة التسجيل
   bool _isRecording = false;
   int _recordingSeconds = 0;
   Timer? _recordingTimer;
   final List<double> _waveform = [];
+
+  // ✅ معرّف الرسالة المُبرزة (من إشعار)
+  String? _highlightedMessageId;
 
   late String _conversationId;
 
@@ -72,10 +91,23 @@ class _ChatScreenState extends State<ChatScreen> {
   void initState() {
     super.initState();
 
+    _highlightedMessageId = widget.highlightMessageId;
+
     _inputController.addListener(() {
       final can = _inputController.text.trim().isNotEmpty;
       if (can != _canSend) {
         setState(() => _canSend = can);
+      }
+    });
+
+    // ✅ مستمع البحث
+    _searchController.addListener(() {
+      final q = _searchController.text.trim();
+      if (q != _searchQuery) {
+        setState(() {
+          _searchQuery = q;
+          _applyFilter();
+        });
       }
     });
 
@@ -90,6 +122,15 @@ class _ChatScreenState extends State<ChatScreen> {
       _eventSub = _messageService!.events.listen(_onMessageEvent);
       await _loadMessages();
       await _messageService!.markConversationAsRead(widget.peer.deviceId);
+
+      // ✅ إذا كانت هناك رسالة مُبرزة، مرّر إليها
+      if (_highlightedMessageId != null) {
+        _scrollToMessage(_highlightedMessageId!);
+        // ألغِ الإبراز بعد 3 ثوان
+        Future.delayed(const Duration(seconds: 3), () {
+          if (mounted) setState(() => _highlightedMessageId = null);
+        });
+      }
     });
   }
 
@@ -99,8 +140,10 @@ class _ChatScreenState extends State<ChatScreen> {
     _recordingTimer?.cancel();
     AudioRecorderService.instance.cancel();
     _inputController.dispose();
+    _searchController.dispose();
     _scrollController.dispose();
     _inputFocus.dispose();
+    _searchFocus.dispose();
     super.dispose();
   }
 
@@ -122,12 +165,37 @@ class _ChatScreenState extends State<ChatScreen> {
       setState(() {
         _messages = rows;
         _isLoading = false;
+        _applyFilter();
       });
       _scrollToBottom(animated: false);
     } catch (e) {
       if (!mounted) return;
       setState(() => _isLoading = false);
     }
+  }
+
+  /// ✅ فلترة الرسائل حسب كلمة البحث
+  void _applyFilter() {
+    if (_searchQuery.isEmpty) {
+      _filteredMessages = _messages;
+      return;
+    }
+
+    final q = _searchQuery.toLowerCase();
+    _filteredMessages = _messages.where((m) {
+      final type = m['type'] as String?;
+      // ابحث في الرسائل النصية فقط
+      if (type == AppConstants.mediaText) {
+        final body = (m['body'] as String?)?.toLowerCase() ?? '';
+        return body.contains(q);
+      }
+      // ابحث أيضًا في أسماء الملفات
+      if (type == AppConstants.mediaFile) {
+        final fileName = (m['file_name'] as String?)?.toLowerCase() ?? '';
+        return fileName.contains(q);
+      }
+      return false;
+    }).toList();
   }
 
   void _onMessageEvent(MessageEvent event) {
@@ -160,6 +228,54 @@ class _ChatScreenState extends State<ChatScreen> {
       } else {
         _scrollController.jumpTo(max);
       }
+    });
+  }
+
+  /// ✅ تمرير إلى رسالة محددة
+  void _scrollToMessage(String messageId) {
+    final items = _messages.reversed.toList();
+    final index = items.indexWhere((m) => m['message_id'] == messageId);
+    if (index == -1) return;
+
+    // نحتاج وقتًا حتى تُبنى القائمة
+    Future.delayed(const Duration(milliseconds: 300), () {
+      if (!_scrollController.hasClients) return;
+      // تقديري: 80 بكسل لكل رسالة (تقدير تقريبي)
+      final targetOffset = (index * 80.0).clamp(
+        0.0,
+        _scrollController.position.maxScrollExtent,
+      );
+      _scrollController.animateTo(
+        targetOffset,
+        duration: const Duration(milliseconds: 400),
+        curve: Curves.easeOut,
+      );
+    });
+  }
+
+  // ============================================
+  // === البحث ===
+  // ============================================
+
+  void _enterSearchMode() {
+    setState(() {
+      _isSearching = true;
+      _searchQuery = '';
+      _searchController.clear();
+      _filteredMessages = _messages;
+    });
+    Future.delayed(const Duration(milliseconds: 100), () {
+      _searchFocus.requestFocus();
+    });
+  }
+
+  void _exitSearchMode() {
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _isSearching = false;
+      _searchQuery = '';
+      _searchController.clear();
+      _filteredMessages = _messages;
     });
   }
 
@@ -205,7 +321,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   // ============================================
-  // === تسجيل صوتي (جديد) ===
+  // === تسجيل صوتي ===
   // ============================================
 
   Future<void> _startRecording() async {
@@ -213,7 +329,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
     final recorder = AudioRecorderService.instance;
 
-    // فحص الإذن
     final hasPermission = await recorder.hasPermission();
     if (!hasPermission) {
       if (!mounted) return;
@@ -238,24 +353,19 @@ class _ChatScreenState extends State<ChatScreen> {
       _waveform.clear();
     });
 
-    // مؤقت العد
     _recordingTimer = Timer.periodic(
       const Duration(seconds: 1),
       (_) {
         if (!mounted) return;
         setState(() => _recordingSeconds++);
-
-        // الحد الأقصى: 5 دقائق
         if (_recordingSeconds >= 300) {
           _stopAndSendRecording();
         }
       },
     );
 
-    // استمع للمستوى الصوتي (لرسم الموجة)
     recorder.getAmplitudeStream().listen((amp) {
       if (!mounted || !_isRecording) return;
-      // تحويل مستوى الديسيبل إلى قيمة 0.0 - 1.0
       final normalized = ((amp.current + 60) / 60).clamp(0.05, 1.0);
       setState(() {
         _waveform.add(normalized);
@@ -285,7 +395,6 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
-    // أرسل الرسالة الصوتية
     setState(() => _isSendingMedia = true);
 
     final replyId = _replyToId;
@@ -542,99 +651,9 @@ class _ChatScreenState extends State<ChatScreen> {
     );
 
     return Scaffold(
-      appBar: AppBar(
-        titleSpacing: 0,
-        title: Row(
-          children: [
-            _Avatar(name: widget.peer.name, online: peerOnline),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Flexible(
-                        child: Text(
-                          widget.peer.name,
-                          style: const TextStyle(
-                            fontSize: 17,
-                            fontWeight: FontWeight.w600,
-                          ),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      if (widget.peer.hasValidNumber) ...[
-                        const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.2),
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Text(
-                            '#${widget.peer.number}',
-                            style: const TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
-                              letterSpacing: 0.5,
-                              fontFeatures: [
-                                FontFeature.tabularFigures(),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    peerOnline
-                        ? 'متصل الآن'
-                        : 'غير متصل • آخر ظهور ${_formatLastSeen(widget.peer.lastSeen)}',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.white.withOpacity(0.85),
-                      fontWeight: FontWeight.normal,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.call_outlined),
-            tooltip: 'مكالمة صوتية',
-            onPressed: peerOnline ? _startAudioCall : null,
-          ),
-          IconButton(
-            icon: const Icon(Icons.videocam_outlined),
-            tooltip: 'مكالمة فيديو',
-            onPressed: peerOnline ? _startVideoCall : null,
-          ),
-          PopupMenuButton<String>(
-            onSelected: (v) {},
-            itemBuilder: (_) => const [
-              PopupMenuItem(
-                value: 'clear',
-                child: Text('مسح المحادثة'),
-              ),
-              PopupMenuItem(
-                value: 'block',
-                child: Text('حظر'),
-              ),
-            ],
-          ),
-        ],
-      ),
+      appBar: _isSearching
+          ? _buildSearchAppBar(isDark)
+          : _buildNormalAppBar(isDark, peerOnline),
       body: Column(
         children: [
           Expanded(
@@ -646,8 +665,10 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
               child: _isLoading
                   ? const Center(child: CircularProgressIndicator())
-                  : _messages.isEmpty
-                      ? _buildEmptyState(isDark)
+                  : _filteredMessages.isEmpty
+                      ? (_searchQuery.isNotEmpty
+                          ? _buildNoResultsState(isDark)
+                          : _buildEmptyState(isDark))
                       : _buildMessagesList(isDark),
             ),
           ),
@@ -655,12 +676,222 @@ class _ChatScreenState extends State<ChatScreen> {
           if (_replyToMessage != null && !_isRecording)
             _buildReplyBar(isDark),
 
-          // ✅ إما شريط التسجيل أو شريط الإدخال
-          if (_isRecording)
-            _buildRecordingBar(isDark)
-          else
-            _buildInputBar(isDark, peerOnline),
+          if (!_isSearching) ...[
+            if (_isRecording)
+              _buildRecordingBar(isDark)
+            else
+              _buildInputBar(isDark, peerOnline),
+          ],
         ],
+      ),
+    );
+  }
+
+  // ============================================
+  // === AppBar العادي ===
+  // ============================================
+
+  PreferredSizeWidget _buildNormalAppBar(bool isDark, bool peerOnline) {
+    return AppBar(
+      titleSpacing: 0,
+      title: Row(
+        children: [
+          _Avatar(name: widget.peer.name, online: peerOnline),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Flexible(
+                      child: Text(
+                        widget.peer.name,
+                        style: const TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    if (widget.peer.hasValidNumber) ...[
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.2),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          '#${widget.peer.number}',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                            letterSpacing: 0.5,
+                            fontFeatures: [
+                              FontFeature.tabularFigures(),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  peerOnline
+                      ? 'متصل الآن'
+                      : 'غير متصل • آخر ظهور ${_formatLastSeen(widget.peer.lastSeen)}',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.white.withOpacity(0.85),
+                    fontWeight: FontWeight.normal,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        // ✅ زر البحث
+        IconButton(
+          icon: const Icon(Icons.search),
+          tooltip: 'بحث',
+          onPressed: _enterSearchMode,
+        ),
+        IconButton(
+          icon: const Icon(Icons.call_outlined),
+          tooltip: 'مكالمة صوتية',
+          onPressed: peerOnline ? _startAudioCall : null,
+        ),
+        IconButton(
+          icon: const Icon(Icons.videocam_outlined),
+          tooltip: 'مكالمة فيديو',
+          onPressed: peerOnline ? _startVideoCall : null,
+        ),
+        PopupMenuButton<String>(
+          onSelected: (v) {},
+          itemBuilder: (_) => const [
+            PopupMenuItem(
+              value: 'clear',
+              child: Text('مسح المحادثة'),
+            ),
+            PopupMenuItem(
+              value: 'block',
+              child: Text('حظر'),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  // ============================================
+  // === AppBar البحث ===
+  // ============================================
+
+  PreferredSizeWidget _buildSearchAppBar(bool isDark) {
+    return AppBar(
+      leading: IconButton(
+        icon: const Icon(Icons.arrow_back),
+        onPressed: _exitSearchMode,
+      ),
+      titleSpacing: 0,
+      title: TextField(
+        controller: _searchController,
+        focusNode: _searchFocus,
+        autofocus: true,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 16,
+        ),
+        cursorColor: Colors.white,
+        decoration: InputDecoration(
+          hintText: 'ابحث في الرسائل...',
+          hintStyle: TextStyle(
+            color: Colors.white.withOpacity(0.7),
+            fontSize: 16,
+          ),
+          border: InputBorder.none,
+          enabledBorder: InputBorder.none,
+          focusedBorder: InputBorder.none,
+          filled: false,
+        ),
+      ),
+      actions: [
+        // عداد النتائج
+        if (_searchQuery.isNotEmpty)
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Text(
+                '${_filteredMessages.length}',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+        // زر مسح النص
+        if (_searchQuery.isNotEmpty)
+          IconButton(
+            icon: const Icon(Icons.close),
+            tooltip: 'مسح',
+            onPressed: () {
+              _searchController.clear();
+            },
+          ),
+      ],
+    );
+  }
+
+  // ============================================
+  // === حالة "لا نتائج" ===
+  // ============================================
+
+  Widget _buildNoResultsState(bool isDark) {
+    final textColor =
+        isDark ? AppTheme.darkTextSecondary : AppTheme.lightTextSecondary;
+
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.search_off,
+              size: 72,
+              color: textColor,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'لا توجد نتائج',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+                color: isDark
+                    ? AppTheme.darkTextPrimary
+                    : AppTheme.lightTextPrimary,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'لم يتم العثور على رسائل تحتوي على "$_searchQuery"',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 14, color: textColor),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -684,20 +915,14 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
         child: Row(
           children: [
-            // زر الإلغاء
             IconButton(
               icon: const Icon(Icons.delete_outline),
               color: AppTheme.errorColor,
               tooltip: 'إلغاء',
               onPressed: _cancelRecording,
             ),
-
-            // نقطة التسجيل (نابضة)
             _PulsingDot(color: AppTheme.errorColor),
-
             const SizedBox(width: 10),
-
-            // المؤقت
             Text(
               _formatRecordingDuration(_recordingSeconds),
               style: TextStyle(
@@ -709,20 +934,14 @@ class _ChatScreenState extends State<ChatScreen> {
                     : AppTheme.lightTextPrimary,
               ),
             ),
-
             const SizedBox(width: 12),
-
-            // الرسم الموجي
             Expanded(
               child: _WaveformBars(
                 values: _waveform,
                 color: AppTheme.errorColor.withOpacity(0.7),
               ),
             ),
-
             const SizedBox(width: 8),
-
-            // زر الإرسال
             Material(
               color: AppTheme.primaryColor,
               shape: const CircleBorder(),
@@ -771,7 +990,6 @@ class _ChatScreenState extends State<ChatScreen> {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            // زر المرفقات
             IconButton(
               icon: _isSendingMedia
                   ? const SizedBox(
@@ -785,7 +1003,6 @@ class _ChatScreenState extends State<ChatScreen> {
                   (peerOnline && !_isSendingMedia) ? _showAttachMenu : null,
             ),
 
-            // حقل النص
             Expanded(
               child: Container(
                 constraints: const BoxConstraints(maxHeight: 120),
@@ -830,7 +1047,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
             const SizedBox(width: 6),
 
-            // ✅ إما زر الإرسال أو زر التسجيل
             if (_canSend && peerOnline)
               Material(
                 color: AppTheme.primaryColor,
@@ -863,6 +1079,54 @@ class _ChatScreenState extends State<ChatScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  // ============================================
+  // === قائمة الرسائل ===
+  // ============================================
+
+  Widget _buildMessagesList(bool isDark) {
+    final items = _filteredMessages.reversed.toList();
+
+    return ListView.builder(
+      controller: _scrollController,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+      itemCount: items.length,
+      itemBuilder: (context, index) {
+        final msg = items[index];
+        final prev = index > 0 ? items[index - 1] : null;
+        final showDate = _searchQuery.isEmpty && _shouldShowDate(msg, prev);
+        final isHighlighted =
+            _highlightedMessageId == msg['message_id'];
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (showDate) _buildDateDivider(msg['created_at'] as int, isDark),
+            // ✅ إبراز الرسالة المُبرزة
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 300),
+              decoration: isHighlighted
+                  ? BoxDecoration(
+                      color: AppTheme.primaryColor.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(12),
+                    )
+                  : null,
+              child: _MessageBubble(
+                message: msg,
+                isDark: isDark,
+                searchQuery: _searchQuery,
+                onReply: () => _startReply(msg),
+                onOpenImage: _openImage,
+                onOpenVideo: _openVideo,
+                onOpenFile: _openFile,
+                transfers: _messageService?.transfers ?? const {},
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -907,37 +1171,6 @@ class _ChatScreenState extends State<ChatScreen> {
           ],
         ),
       ),
-    );
-  }
-
-  Widget _buildMessagesList(bool isDark) {
-    final items = _messages.reversed.toList();
-
-    return ListView.builder(
-      controller: _scrollController,
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
-      itemCount: items.length,
-      itemBuilder: (context, index) {
-        final msg = items[index];
-        final prev = index > 0 ? items[index - 1] : null;
-        final showDate = _shouldShowDate(msg, prev);
-
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            if (showDate) _buildDateDivider(msg['created_at'] as int, isDark),
-            _MessageBubble(
-              message: msg,
-              isDark: isDark,
-              onReply: () => _startReply(msg),
-              onOpenImage: _openImage,
-              onOpenVideo: _openVideo,
-              onOpenFile: _openFile,
-              transfers: _messageService?.transfers ?? const {},
-            ),
-          ],
-        );
-      },
     );
   }
 
@@ -1169,7 +1402,7 @@ class _ChatScreenState extends State<ChatScreen> {
 }
 
 // ============================================================
-// === نقطة نابضة (للتسجيل) ===
+// === نقطة نابضة ===
 // ============================================================
 class _PulsingDot extends StatefulWidget {
   final Color color;
@@ -1310,11 +1543,12 @@ class _Avatar extends StatelessWidget {
 }
 
 // ============================================================
-// === فقاعة الرسالة ===
+// === فقاعة الرسالة (مع دعم إبراز نص البحث) ===
 // ============================================================
 class _MessageBubble extends StatelessWidget {
   final Map<String, dynamic> message;
   final bool isDark;
+  final String searchQuery;
   final VoidCallback onReply;
   final void Function(String) onOpenImage;
   final void Function(String, {String? title}) onOpenVideo;
@@ -1324,6 +1558,7 @@ class _MessageBubble extends StatelessWidget {
   const _MessageBubble({
     required this.message,
     required this.isDark,
+    required this.searchQuery,
     required this.onReply,
     required this.onOpenImage,
     required this.onOpenVideo,
@@ -1448,7 +1683,6 @@ class _MessageBubble extends StatelessWidget {
       case AppConstants.mediaVideo:
         return _buildVideoPreview(filePath);
 
-      // ✅ الرسالة الصوتية
       case AppConstants.mediaAudio:
         if (filePath == null || !File(filePath).existsSync()) {
           return _buildPlaceholderPreview(
@@ -1476,18 +1710,71 @@ class _MessageBubble extends StatelessWidget {
             horizontal: 12,
             vertical: 8,
           ),
-          child: Text(
+          child: _buildHighlightedText(
             body,
-            style: TextStyle(
-              fontSize: 15,
-              height: 1.35,
-              color: isDark
-                  ? AppTheme.darkTextPrimary
-                  : AppTheme.lightTextPrimary,
-            ),
+            isDark: isDark,
           ),
         );
     }
+  }
+
+  /// ✅ نص مع إبراز كلمة البحث
+  Widget _buildHighlightedText(String text, {required bool isDark}) {
+    final baseStyle = TextStyle(
+      fontSize: 15,
+      height: 1.35,
+      color: isDark
+          ? AppTheme.darkTextPrimary
+          : AppTheme.lightTextPrimary,
+    );
+
+    // إذا لم يكن هناك بحث → النص العادي
+    if (searchQuery.isEmpty) {
+      return Text(text, style: baseStyle);
+    }
+
+    // ابحث عن كل التطابقات
+    final lowerText = text.toLowerCase();
+    final lowerQuery = searchQuery.toLowerCase();
+    final spans = <TextSpan>[];
+    int start = 0;
+
+    while (true) {
+      final index = lowerText.indexOf(lowerQuery, start);
+      if (index == -1) {
+        // أضف البقية
+        if (start < text.length) {
+          spans.add(TextSpan(text: text.substring(start)));
+        }
+        break;
+      }
+
+      // أضف ما قبل التطابق
+      if (index > start) {
+        spans.add(TextSpan(text: text.substring(start, index)));
+      }
+
+      // أضف التطابق مع إبراز
+      spans.add(
+        TextSpan(
+          text: text.substring(index, index + searchQuery.length),
+          style: TextStyle(
+            backgroundColor: Colors.yellow.withOpacity(0.6),
+            color: Colors.black,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      );
+
+      start = index + searchQuery.length;
+    }
+
+    return RichText(
+      text: TextSpan(
+        style: baseStyle,
+        children: spans,
+      ),
+    );
   }
 
   Widget _buildImagePreview(String? filePath) {
