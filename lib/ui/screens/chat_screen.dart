@@ -14,9 +14,11 @@ import '../../core/constants.dart';
 import '../../core/discovery/device_discovery.dart';
 import '../../core/discovery/discovered_device.dart';
 import '../../core/messaging/message_service.dart';
+import '../../core/services/audio_recorder_service.dart';
 import '../../data/database/database_helper.dart';
 import '../theme/app_theme.dart';
 import '../widgets/permission_dialog.dart';
+import '../widgets/voice_message_bubble.dart';
 import 'audio_call_screen.dart';
 import 'video_call_screen.dart';
 import 'video_player_screen.dart';
@@ -54,6 +56,12 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _canSend = false;
   bool _isSendingMedia = false;
 
+  // ✅ حالة التسجيل الصوتي
+  bool _isRecording = false;
+  int _recordingSeconds = 0;
+  Timer? _recordingTimer;
+  final List<double> _waveform = [];
+
   late String _conversationId;
 
   // ============================================
@@ -88,6 +96,8 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void dispose() {
     _eventSub?.cancel();
+    _recordingTimer?.cancel();
+    AudioRecorderService.instance.cancel();
     _inputController.dispose();
     _scrollController.dispose();
     _inputFocus.dispose();
@@ -195,10 +205,135 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   // ============================================
+  // === تسجيل صوتي (جديد) ===
+  // ============================================
+
+  Future<void> _startRecording() async {
+    if (_isRecording) return;
+
+    final recorder = AudioRecorderService.instance;
+
+    // فحص الإذن
+    final hasPermission = await recorder.hasPermission();
+    if (!hasPermission) {
+      if (!mounted) return;
+      final granted = await PermissionDialog.ensure(
+        context,
+        permissions: <ph.Permission>[ph.Permission.microphone],
+        title: 'الميكروفون',
+        message: 'نحتاج الميكروفون لتسجيل الرسائل الصوتية',
+        icon: Icons.mic,
+      );
+      if (!granted) return;
+    }
+
+    final path = await recorder.start();
+    if (path == null || !mounted) return;
+
+    HapticFeedback.mediumImpact();
+
+    setState(() {
+      _isRecording = true;
+      _recordingSeconds = 0;
+      _waveform.clear();
+    });
+
+    // مؤقت العد
+    _recordingTimer = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) {
+        if (!mounted) return;
+        setState(() => _recordingSeconds++);
+
+        // الحد الأقصى: 5 دقائق
+        if (_recordingSeconds >= 300) {
+          _stopAndSendRecording();
+        }
+      },
+    );
+
+    // استمع للمستوى الصوتي (لرسم الموجة)
+    recorder.getAmplitudeStream().listen((amp) {
+      if (!mounted || !_isRecording) return;
+      // تحويل مستوى الديسيبل إلى قيمة 0.0 - 1.0
+      final normalized = ((amp.current + 60) / 60).clamp(0.05, 1.0);
+      setState(() {
+        _waveform.add(normalized);
+        if (_waveform.length > 40) _waveform.removeAt(0);
+      });
+    });
+  }
+
+  Future<void> _stopAndSendRecording() async {
+    if (!_isRecording) return;
+
+    _recordingTimer?.cancel();
+    _recordingTimer = null;
+
+    final result = await AudioRecorderService.instance.stop();
+
+    if (!mounted) return;
+
+    setState(() {
+      _isRecording = false;
+      _recordingSeconds = 0;
+      _waveform.clear();
+    });
+
+    if (result == null) {
+      _showError('التسجيل قصير جدًا');
+      return;
+    }
+
+    // أرسل الرسالة الصوتية
+    setState(() => _isSendingMedia = true);
+
+    final replyId = _replyToId;
+    setState(() {
+      _replyToId = null;
+      _replyToMessage = null;
+    });
+
+    try {
+      final sendResult = await _messageService!.sendMedia(
+        peerDeviceId: widget.peer.deviceId,
+        filePath: result.path,
+        mediaType: AppConstants.mediaAudio,
+        replyToId: replyId,
+      );
+
+      if (!sendResult.ok && mounted) {
+        _showError(sendResult.error ?? 'فشل إرسال المقطع');
+      }
+      _scrollToBottom();
+    } catch (e) {
+      if (mounted) _showError('فشل الإرسال: $e');
+    } finally {
+      if (mounted) setState(() => _isSendingMedia = false);
+    }
+  }
+
+  Future<void> _cancelRecording() async {
+    if (!_isRecording) return;
+
+    _recordingTimer?.cancel();
+    _recordingTimer = null;
+
+    await AudioRecorderService.instance.cancel();
+
+    if (!mounted) return;
+
+    setState(() {
+      _isRecording = false;
+      _recordingSeconds = 0;
+      _waveform.clear();
+    });
+  }
+
+  // ============================================
   // === فتح الوسائط ===
   // ============================================
 
-  /// فتح صورة بملء الشاشة
   void _openImage(String filePath) {
     Navigator.of(context).push(
       PageRouteBuilder(
@@ -212,7 +347,6 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  /// تشغيل فيديو بملء الشاشة
   void _openVideo(String filePath, {String? title}) {
     Navigator.of(context).push(
       MaterialPageRoute(
@@ -224,7 +358,6 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  /// فتح ملف بتطبيق النظام
   Future<void> _openFile(String filePath) async {
     try {
       final file = File(filePath);
@@ -303,7 +436,6 @@ class _ChatScreenState extends State<ChatScreen> {
       if (!result.ok && mounted) {
         _showError(result.error ?? 'فشل الإرسال');
       }
-
       _scrollToBottom();
     } catch (e) {
       if (mounted) _showError('فشل الإرسال: $e');
@@ -489,9 +621,7 @@ class _ChatScreenState extends State<ChatScreen> {
             onPressed: peerOnline ? _startVideoCall : null,
           ),
           PopupMenuButton<String>(
-            onSelected: (v) {
-              // TODO: خيارات إضافية
-            },
+            onSelected: (v) {},
             itemBuilder: (_) => const [
               PopupMenuItem(
                 value: 'clear',
@@ -522,16 +652,222 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ),
 
-          if (_replyToMessage != null) _buildReplyBar(isDark),
+          if (_replyToMessage != null && !_isRecording)
+            _buildReplyBar(isDark),
 
-          _buildInputBar(isDark, peerOnline),
+          // ✅ إما شريط التسجيل أو شريط الإدخال
+          if (_isRecording)
+            _buildRecordingBar(isDark)
+          else
+            _buildInputBar(isDark, peerOnline),
         ],
       ),
     );
   }
 
   // ============================================
-  // === بناء عناصر الواجهة ===
+  // === شريط التسجيل ===
+  // ============================================
+
+  Widget _buildRecordingBar(bool isDark) {
+    return SafeArea(
+      top: false,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: isDark ? AppTheme.darkSurface : Colors.white,
+          border: Border(
+            top: BorderSide(
+              color: isDark ? AppTheme.darkDivider : AppTheme.lightDivider,
+            ),
+          ),
+        ),
+        child: Row(
+          children: [
+            // زر الإلغاء
+            IconButton(
+              icon: const Icon(Icons.delete_outline),
+              color: AppTheme.errorColor,
+              tooltip: 'إلغاء',
+              onPressed: _cancelRecording,
+            ),
+
+            // نقطة التسجيل (نابضة)
+            _PulsingDot(color: AppTheme.errorColor),
+
+            const SizedBox(width: 10),
+
+            // المؤقت
+            Text(
+              _formatRecordingDuration(_recordingSeconds),
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+                fontFeatures: const [FontFeature.tabularFigures()],
+                color: isDark
+                    ? AppTheme.darkTextPrimary
+                    : AppTheme.lightTextPrimary,
+              ),
+            ),
+
+            const SizedBox(width: 12),
+
+            // الرسم الموجي
+            Expanded(
+              child: _WaveformBars(
+                values: _waveform,
+                color: AppTheme.errorColor.withOpacity(0.7),
+              ),
+            ),
+
+            const SizedBox(width: 8),
+
+            // زر الإرسال
+            Material(
+              color: AppTheme.primaryColor,
+              shape: const CircleBorder(),
+              child: InkWell(
+                customBorder: const CircleBorder(),
+                onTap: _stopAndSendRecording,
+                child: const Padding(
+                  padding: EdgeInsets.all(12),
+                  child: Icon(
+                    Icons.send_rounded,
+                    color: Colors.white,
+                    size: 22,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _formatRecordingDuration(int seconds) {
+    final m = seconds ~/ 60;
+    final s = seconds % 60;
+    return '$m:${s.toString().padLeft(2, '0')}';
+  }
+
+  // ============================================
+  // === شريط الإدخال ===
+  // ============================================
+
+  Widget _buildInputBar(bool isDark, bool peerOnline) {
+    return SafeArea(
+      top: false,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+        decoration: BoxDecoration(
+          color: isDark ? AppTheme.darkSurface : Colors.white,
+          border: Border(
+            top: BorderSide(
+              color: isDark ? AppTheme.darkDivider : AppTheme.lightDivider,
+            ),
+          ),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            // زر المرفقات
+            IconButton(
+              icon: _isSendingMedia
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.add_circle_outline),
+              color: AppTheme.primaryColor,
+              onPressed:
+                  (peerOnline && !_isSendingMedia) ? _showAttachMenu : null,
+            ),
+
+            // حقل النص
+            Expanded(
+              child: Container(
+                constraints: const BoxConstraints(maxHeight: 120),
+                decoration: BoxDecoration(
+                  color: isDark
+                      ? AppTheme.darkBackground
+                      : const Color(0xFFF1F3F5),
+                  borderRadius: BorderRadius.circular(22),
+                ),
+                child: TextField(
+                  controller: _inputController,
+                  focusNode: _inputFocus,
+                  enabled: peerOnline,
+                  maxLines: null,
+                  textInputAction: TextInputAction.newline,
+                  keyboardType: TextInputType.multiline,
+                  decoration: InputDecoration(
+                    hintText: peerOnline ? 'اكتب رسالة...' : 'الجهاز غير متصل',
+                    hintStyle: TextStyle(
+                      color: isDark
+                          ? AppTheme.darkTextSecondary
+                          : AppTheme.lightTextSecondary,
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 10,
+                    ),
+                    border: InputBorder.none,
+                    enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
+                    filled: false,
+                  ),
+                  style: TextStyle(
+                    color: isDark
+                        ? AppTheme.darkTextPrimary
+                        : AppTheme.lightTextPrimary,
+                    fontSize: 15,
+                  ),
+                ),
+              ),
+            ),
+
+            const SizedBox(width: 6),
+
+            // ✅ إما زر الإرسال أو زر التسجيل
+            if (_canSend && peerOnline)
+              Material(
+                color: AppTheme.primaryColor,
+                shape: const CircleBorder(),
+                child: InkWell(
+                  customBorder: const CircleBorder(),
+                  onTap: _sendText,
+                  child: const Padding(
+                    padding: EdgeInsets.all(12),
+                    child: Icon(Icons.send, color: Colors.white, size: 22),
+                  ),
+                ),
+              )
+            else
+              Material(
+                color: peerOnline
+                    ? AppTheme.primaryColor
+                    : AppTheme.primaryColor.withOpacity(0.35),
+                shape: const CircleBorder(),
+                child: InkWell(
+                  customBorder: const CircleBorder(),
+                  onTap: peerOnline ? _startRecording : null,
+                  onLongPress: peerOnline ? _startRecording : null,
+                  child: const Padding(
+                    padding: EdgeInsets.all(12),
+                    child: Icon(Icons.mic, color: Colors.white, size: 22),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ============================================
+  // === باقي الواجهة ===
   // ============================================
 
   Widget _buildEmptyState(bool isDark) {
@@ -584,7 +920,6 @@ class _ChatScreenState extends State<ChatScreen> {
       itemBuilder: (context, index) {
         final msg = items[index];
         final prev = index > 0 ? items[index - 1] : null;
-
         final showDate = _shouldShowDate(msg, prev);
 
         return Column(
@@ -708,99 +1043,6 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Widget _buildInputBar(bool isDark, bool peerOnline) {
-    return SafeArea(
-      top: false,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-        decoration: BoxDecoration(
-          color: isDark ? AppTheme.darkSurface : Colors.white,
-          border: Border(
-            top: BorderSide(
-              color: isDark ? AppTheme.darkDivider : AppTheme.lightDivider,
-            ),
-          ),
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            IconButton(
-              icon: _isSendingMedia
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.add_circle_outline),
-              color: AppTheme.primaryColor,
-              onPressed:
-                  (peerOnline && !_isSendingMedia) ? _showAttachMenu : null,
-            ),
-
-            Expanded(
-              child: Container(
-                constraints: const BoxConstraints(maxHeight: 120),
-                decoration: BoxDecoration(
-                  color: isDark
-                      ? AppTheme.darkBackground
-                      : const Color(0xFFF1F3F5),
-                  borderRadius: BorderRadius.circular(22),
-                ),
-                child: TextField(
-                  controller: _inputController,
-                  focusNode: _inputFocus,
-                  enabled: peerOnline,
-                  maxLines: null,
-                  textInputAction: TextInputAction.newline,
-                  keyboardType: TextInputType.multiline,
-                  decoration: InputDecoration(
-                    hintText: peerOnline ? 'اكتب رسالة...' : 'الجهاز غير متصل',
-                    hintStyle: TextStyle(
-                      color: isDark
-                          ? AppTheme.darkTextSecondary
-                          : AppTheme.lightTextSecondary,
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 10,
-                    ),
-                    border: InputBorder.none,
-                    enabledBorder: InputBorder.none,
-                    focusedBorder: InputBorder.none,
-                    filled: false,
-                  ),
-                  style: TextStyle(
-                    color: isDark
-                        ? AppTheme.darkTextPrimary
-                        : AppTheme.lightTextPrimary,
-                    fontSize: 15,
-                  ),
-                ),
-              ),
-            ),
-
-            const SizedBox(width: 6),
-
-            Material(
-              color: _canSend
-                  ? AppTheme.primaryColor
-                  : AppTheme.primaryColor.withOpacity(0.35),
-              shape: const CircleBorder(),
-              child: InkWell(
-                customBorder: const CircleBorder(),
-                onTap: _canSend && peerOnline ? _sendText : null,
-                child: const Padding(
-                  padding: EdgeInsets.all(12),
-                  child: Icon(Icons.send, color: Colors.white, size: 22),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   void _showAttachMenu() {
     showModalBottomSheet(
       context: context,
@@ -884,7 +1126,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   // ============================================
-  // === تنسيقات النصوص ===
+  // === تنسيقات ===
   // ============================================
 
   String _previewText(Map<String, dynamic> msg) {
@@ -923,6 +1165,99 @@ class _ChatScreenState extends State<ChatScreen> {
     if (diff.inMinutes < 60) return 'قبل ${diff.inMinutes} دقيقة';
     if (diff.inHours < 24) return 'قبل ${diff.inHours} ساعة';
     return 'قبل ${diff.inDays} يوم';
+  }
+}
+
+// ============================================================
+// === نقطة نابضة (للتسجيل) ===
+// ============================================================
+class _PulsingDot extends StatefulWidget {
+  final Color color;
+
+  const _PulsingDot({required this.color});
+
+  @override
+  State<_PulsingDot> createState() => _PulsingDotState();
+}
+
+class _PulsingDotState extends State<_PulsingDot>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _c;
+
+  @override
+  void initState() {
+    super.initState();
+    _c = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 800),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _c,
+      builder: (_, __) => Container(
+        width: 12,
+        height: 12,
+        decoration: BoxDecoration(
+          color: widget.color.withOpacity(0.4 + _c.value * 0.6),
+          shape: BoxShape.circle,
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================
+// === موجة صوتية ===
+// ============================================================
+class _WaveformBars extends StatelessWidget {
+  final List<double> values;
+  final Color color;
+
+  const _WaveformBars({
+    required this.values,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (values.isEmpty) {
+      return Container(
+        height: 28,
+        alignment: Alignment.center,
+        child: Text(
+          '● ● ●',
+          style: TextStyle(color: color, fontSize: 10),
+        ),
+      );
+    }
+
+    return SizedBox(
+      height: 28,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: values.map((v) {
+          return Container(
+            width: 3,
+            height: 6 + (v * 22),
+            margin: const EdgeInsets.symmetric(horizontal: 1),
+            decoration: BoxDecoration(
+              color: color,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          );
+        }).toList(),
+      ),
+    );
   }
 }
 
@@ -1000,6 +1335,7 @@ class _MessageBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final isOutgoing = (message['is_outgoing'] as int?) == 1;
     final messageId = message['message_id'] as String;
+    final isAudio = (message['type'] as String?) == AppConstants.mediaAudio;
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
@@ -1011,7 +1347,9 @@ class _MessageBubble extends StatelessWidget {
           onLongPress: onReply,
           child: Container(
             constraints: BoxConstraints(
-              maxWidth: MediaQuery.of(context).size.width * 0.78,
+              maxWidth: isAudio
+                  ? 320
+                  : MediaQuery.of(context).size.width * 0.78,
             ),
             decoration: BoxDecoration(
               color: isOutgoing
@@ -1101,6 +1439,7 @@ class _MessageBubble extends StatelessWidget {
   Widget _buildContent(BuildContext context, bool isDark) {
     final type = message['type'] as String?;
     final filePath = message['file_path'] as String?;
+    final isOutgoing = (message['is_outgoing'] as int?) == 1;
 
     switch (type) {
       case AppConstants.mediaImage:
@@ -1109,8 +1448,21 @@ class _MessageBubble extends StatelessWidget {
       case AppConstants.mediaVideo:
         return _buildVideoPreview(filePath);
 
+      // ✅ الرسالة الصوتية
       case AppConstants.mediaAudio:
-        return _buildAudioPreview(filePath);
+        if (filePath == null || !File(filePath).existsSync()) {
+          return _buildPlaceholderPreview(
+            icon: Icons.mic_off,
+            label: 'مقطع صوتي غير متوفر',
+            color: Colors.grey,
+          );
+        }
+        return VoiceMessageBubble(
+          filePath: filePath,
+          durationMs: message['duration_ms'] as int?,
+          isOutgoing: isOutgoing,
+          isDark: isDark,
+        );
 
       case AppConstants.mediaFile:
         final fileName = message['file_name'] as String? ?? 'ملف';
@@ -1138,9 +1490,6 @@ class _MessageBubble extends StatelessWidget {
     }
   }
 
-  // ============================================
-  // === معاينة الصورة (قابلة للضغط) ===
-  // ============================================
   Widget _buildImagePreview(String? filePath) {
     if (filePath == null || !File(filePath).existsSync()) {
       return _buildPlaceholderPreview(
@@ -1178,9 +1527,6 @@ class _MessageBubble extends StatelessWidget {
     );
   }
 
-  // ============================================
-  // === معاينة الفيديو (قابلة للضغط) ===
-  // ============================================
   Widget _buildVideoPreview(String? filePath) {
     final exists = filePath != null && File(filePath).existsSync();
 
@@ -1197,14 +1543,11 @@ class _MessageBubble extends StatelessWidget {
         child: Stack(
           alignment: Alignment.center,
           children: [
-            // أيقونة الفيديو في الخلفية
             Icon(
               Icons.movie_outlined,
               size: 60,
               color: Colors.white.withOpacity(0.15),
             ),
-
-            // زر التشغيل
             Container(
               width: 56,
               height: 56,
@@ -1231,8 +1574,6 @@ class _MessageBubble extends StatelessWidget {
                     : Colors.white.withOpacity(0.5),
               ),
             ),
-
-            // التسمية السفلية
             Positioned(
               bottom: 8,
               left: 8,
@@ -1272,27 +1613,12 @@ class _MessageBubble extends StatelessWidget {
     );
   }
 
-  // ============================================
-  // === معاينة المقطع الصوتي ===
-  // ============================================
-  Widget _buildAudioPreview(String? filePath) {
-    return _buildPlaceholderPreview(
-      icon: Icons.play_arrow_rounded,
-      label: 'مقطع صوتي',
-      color: Colors.purple,
-    );
-  }
-
-  // ============================================
-  // === معاينة الملف (قابلة للضغط) ===
-  // ============================================
   Widget _buildFilePreview(String? filePath, String fileName) {
     final ext = fileName.contains('.')
         ? fileName.split('.').last.toUpperCase()
         : 'FILE';
     final exists = filePath != null && File(filePath).existsSync();
 
-    // لون حسب نوع الملف
     Color iconColor = AppTheme.primaryColor;
     if (['PDF'].contains(ext)) iconColor = Colors.red;
     if (['DOC', 'DOCX'].contains(ext)) iconColor = Colors.blue;
@@ -1363,24 +1689,26 @@ class _MessageBubble extends StatelessWidget {
     required Color color,
   }) {
     return Container(
-      width: 220,
-      height: 150,
-      margin: const EdgeInsets.all(4),
+      width: 200,
+      height: 80,
+      margin: const EdgeInsets.all(6),
       decoration: BoxDecoration(
         color: color.withOpacity(0.15),
         borderRadius: BorderRadius.circular(10),
       ),
-      child: Column(
+      child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(icon, size: 40, color: color),
-          const SizedBox(height: 6),
-          Text(
-            label,
-            style: TextStyle(
-              color: color,
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
+          Icon(icon, size: 30, color: color),
+          const SizedBox(width: 10),
+          Flexible(
+            child: Text(
+              label,
+              style: TextStyle(
+                color: color,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
         ],
@@ -1421,7 +1749,7 @@ class _MessageBubble extends StatelessWidget {
 }
 
 // ============================================================
-// === شاشة عرض الصورة بملء الشاشة ===
+// === عارض الصورة بملء الشاشة ===
 // ============================================================
 class _ImageViewerScreen extends StatelessWidget {
   final String filePath;
@@ -1436,7 +1764,6 @@ class _ImageViewerScreen extends StatelessWidget {
         onTap: () => Navigator.of(context).pop(),
         child: Stack(
           children: [
-            // الصورة
             Positioned.fill(
               child: InteractiveViewer(
                 minScale: 1.0,
@@ -1459,8 +1786,6 @@ class _ImageViewerScreen extends StatelessWidget {
                 ),
               ),
             ),
-
-            // زر الإغلاق
             Positioned(
               top: 16,
               right: 16,
