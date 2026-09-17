@@ -1,26 +1,42 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter_callkit_incoming/entities/entities.dart';
+import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
 import '../../data/database/database_helper.dart';
 import '../constants.dart';
+import '../services/notification_service.dart';
 import '../signaling/signaling_service.dart';
 
 /// ============================================================
-/// محرك WebRTC — مع تسجيل المكالمات في قاعدة البيانات
+/// محرك WebRTC مع دعم الإشعارات في الخلفية (Callkit)
 /// ============================================================
 class RtcService extends ChangeNotifier {
   RtcService();
 
+  // ============================================
+  // === المراجع ===
+  // ============================================
   SignalingService? _signaling;
   StreamSubscription<SignalingMessage>? _messageSub;
+
+  NotificationService? _notification;
+  StreamSubscription<CallEvent?>? _callkitSub;
 
   void attachSignaling(SignalingService signaling) {
     if (_signaling == signaling) return;
     _messageSub?.cancel();
     _signaling = signaling;
     _messageSub = _signaling!.messages.listen(_onSignalingMessage);
+  }
+
+  void attachNotification(NotificationService notification) {
+    if (_notification == notification) return;
+    _callkitSub?.cancel();
+    _notification = notification;
+    _callkitSub = _notification!.callEvents.listen(_onCallkitEvent);
   }
 
   // ============================================
@@ -48,7 +64,6 @@ class RtcService extends ChangeNotifier {
   DateTime? _callStartedAt;
   DateTime? get callStartedAt => _callStartedAt;
 
-  // تتبع بدء المكالمة لتسجيلها
   DateTime? _callLogStartTime;
 
   int get callDurationSeconds {
@@ -87,7 +102,7 @@ class RtcService extends ChangeNotifier {
   final List<RTCIceCandidate> _pendingCandidates = [];
 
   // ============================================
-  // === الإعدادات ===
+  // === إعدادات ===
   // ============================================
   final Map<String, dynamic> _iceServers = const {
     'iceServers': <Map<String, dynamic>>[],
@@ -161,7 +176,7 @@ class RtcService extends ChangeNotifier {
     _callLogStartTime = DateTime.now();
     notifyListeners();
 
-    // ✅ سجّل المكالمة في قاعدة البيانات فورًا
+    // ✅ سجّل المكالمة
     await _logCallStart(direction: AppConstants.callDirectionOutgoing);
 
     try {
@@ -197,7 +212,7 @@ class RtcService extends ChangeNotifier {
   }
 
   // ============================================
-  // === استقبال مكالمة ===
+  // === استقبال مكالمة + عرض Callkit ===
   // ============================================
 
   Future<void> _handleIncomingCall(SignalingMessage msg) async {
@@ -212,16 +227,21 @@ class RtcService extends ChangeNotifier {
     _currentCallId = msg.payload['callId'] as String;
     _peerDeviceId = msg.from;
     _peerName = msg.payload['peerName'] as String? ?? 'جهاز';
-    _callType = msg.payload['media'] as String? ?? AppConstants.callTypeAudio;
+    _callType =
+        msg.payload['media'] as String? ?? AppConstants.callTypeAudio;
     _isCaller = false;
     _callState = AppConstants.callStateRinging;
     _hasRemoteVideo = false;
     _callLogStartTime = DateTime.now();
     notifyListeners();
 
-    // ✅ سجّل المكالمة الواردة
+    // ✅ سجّل المكالمة في DB
     await _logCallStart(direction: AppConstants.callDirectionIncoming);
 
+    // ✅ اعرض واجهة المكالمة الأصلية (تعمل على شاشة القفل والخلفية)
+    await _showCallkitIncoming();
+
+    // أخبر الواجهة (لاستخدام عند فتح التطبيق لاحقًا)
     _eventController.add(RtcEvent(
       type: RtcEventType.incomingCall,
       callId: _currentCallId,
@@ -230,6 +250,158 @@ class RtcService extends ChangeNotifier {
       callType: _callType,
     ));
   }
+
+  /// عرض واجهة المكالمة الواردة عبر Callkit
+  Future<void> _showCallkitIncoming() async {
+    try {
+      final params = CallKitParams(
+        id: _currentCallId,
+        nameCaller: _peerName,
+        appName: 'LanPhone',
+        // 0 = Audio, 1 = Video
+        type: _callType == AppConstants.callTypeVideo ? 1 : 0,
+        // مهلة 45 ثانية
+        duration: 45000,
+        textAccept: 'قبول',
+        textDecline: 'رفض',
+        textMissedCall: 'مكالمة فائتة',
+        textCallback: 'إعادة الاتصال',
+        missingPermissionMessage: 'نحتاج الأذونات لعرض المكالمة',
+        // ✅ بيانات إضافية تُعاد إلينا عند الأحداث
+        extra: <String, dynamic>{
+          'peerDeviceId': _peerDeviceId,
+          'peerName': _peerName,
+          'callType': _callType,
+          'callId': _currentCallId,
+        },
+        headers: <String, dynamic>{},
+        android: const AndroidParams(
+          isCustomNotification: true,
+          isShowLogo: true,
+          isShowCallID: false,
+          ringtonePath: 'system_ringtone_default',
+          backgroundColor: '#0F7B6C',
+          actionColor: '#25D366',
+          textColor: '#FFFFFF',
+          incomingCallNotificationChannelName: 'مكالمات واردة',
+          missedCallNotificationChannelName: 'مكالمات فائتة',
+          isShowFullLockedScreen: true,
+          isImportant: true,
+        ),
+        ios: const IOSParams(
+          iconName: 'AppIcon',
+          handleType: 'generic',
+          supportsVideo: true,
+          maximumCallGroups: 1,
+          maximumCallsPerCallGroup: 1,
+          audioSessionMode: 'default',
+          audioSessionActive: true,
+          audioSessionPreferredSampleRate: 8000.0,
+          audioSessionPreferredIOBufferDuration: 0.02,
+          supportsDTMF: false,
+          supportsHolding: false,
+          supportsGrouping: false,
+          supportsUngrouping: false,
+          ringtonePath: 'system_ringtone_default',
+        ),
+      );
+
+      await FlutterCallkitIncoming.showCallkitIncoming(params);
+      debugPrint('[RTC] Callkit UI shown for $_currentCallId');
+    } catch (e) {
+      debugPrint('[RTC] showCallkitIncoming error: $e');
+    }
+  }
+
+  /// إغلاق واجهة Callkit
+  Future<void> _dismissCallkit({bool missed = false}) async {
+    try {
+      if (missed) {
+        await FlutterCallkitIncoming.endCall(_currentCallId);
+      } else {
+        await FlutterCallkitIncoming.endCall(_currentCallId);
+      }
+    } catch (e) {
+      debugPrint('[RTC] dismissCallkit error: $e');
+    }
+  }
+
+  // ============================================
+  // === معالجة أحداث Callkit ===
+  // ============================================
+
+  Future<void> _onCallkitEvent(CallEvent? event) async {
+    if (event == null) return;
+
+    final eventName = event.event;
+    debugPrint('[RTC] Callkit event: $eventName');
+
+    switch (eventName) {
+      case CallEvent.actionCallAccept:
+        await _onCallkitAccept(event);
+        break;
+
+      case CallEvent.actionCallDecline:
+        await _onCallkitDecline();
+        break;
+
+      case CallEvent.actionCallTimeout:
+        await _onCallkitTimeout();
+        break;
+
+      case CallEvent.actionCallEnd:
+        await _onCallkitEnd();
+        break;
+
+      case CallEvent.actionCallToggleMute:
+        toggleMute();
+        break;
+
+      default:
+        break;
+    }
+  }
+
+  Future<void> _onCallkitAccept(CallEvent event) async {
+    if (_callState != AppConstants.callStateRinging) return;
+
+    debugPrint('[RTC] Callkit accept');
+    await acceptCall();
+
+    // أبلغ الواجهة لفتح شاشة المكالمة
+    _eventController.add(RtcEvent(
+      type: RtcEventType.callAccepted,
+      callId: _currentCallId,
+      peerDeviceId: _peerDeviceId,
+      peerName: _peerName,
+      callType: _callType,
+    ));
+  }
+
+  Future<void> _onCallkitDecline() async {
+    if (_callState != AppConstants.callStateRinging) return;
+    debugPrint('[RTC] Callkit decline');
+    await rejectCall();
+  }
+
+  Future<void> _onCallkitTimeout() async {
+    if (_callState != AppConstants.callStateRinging) return;
+    debugPrint('[RTC] Callkit timeout');
+    await _saveCallLogEnd(state: AppConstants.callStateMissed);
+    await _cleanup();
+    _resetState();
+    notifyListeners();
+  }
+
+  Future<void> _onCallkitEnd() async {
+    if (!isInCall) return;
+    debugPrint('[RTC] Callkit end');
+    await endCall(reason: 'user-hangup');
+  }
+
+  // ============================================
+  // === قبول / رفض ===
+  // ============================================
 
   Future<bool> acceptCall() async {
     if (_callState != AppConstants.callStateRinging) return false;
@@ -269,12 +441,13 @@ class RtcService extends ChangeNotifier {
     notifyListeners();
 
     await _saveCallLogEnd(state: AppConstants.callStateDeclined);
+    await _dismissCallkit();
     await _cleanup();
     _resetState();
   }
 
   // ============================================
-  // === معالجة رسائل Signaling ===
+  // === معالجة Signaling ===
   // ============================================
 
   Future<void> _onSignalingMessage(SignalingMessage msg) async {
@@ -329,6 +502,7 @@ class RtcService extends ChangeNotifier {
     notifyListeners();
 
     await _saveCallLogEnd(state: AppConstants.callStateDeclined);
+    await _dismissCallkit();
     await _cleanup();
     _resetState();
   }
@@ -348,6 +522,7 @@ class RtcService extends ChangeNotifier {
     notifyListeners();
 
     await _saveCallLogEnd(state: AppConstants.callStateDeclined);
+    await _dismissCallkit();
     await _cleanup();
     _resetState();
   }
@@ -364,19 +539,19 @@ class RtcService extends ChangeNotifier {
       reason: 'ended',
     ));
 
-    // إذا لم يُرد أحد (لم نصل إلى connected أبدًا)
     final finalState = _callStartedAt == null
         ? AppConstants.callStateMissed
         : AppConstants.callStateEnded;
 
     await _saveCallLogEnd(state: finalState);
+    await _dismissCallkit();
     await _cleanup();
     _resetState();
     notifyListeners();
   }
 
   // ============================================
-  // === SDP/ICE ===
+  // === SDP / ICE ===
   // ============================================
 
   Future<void> _handleSdpOffer(SignalingMessage msg) async {
@@ -416,11 +591,8 @@ class RtcService extends ChangeNotifier {
     try {
       final sdp = msg.payload['sdp'] as String;
       final type = msg.payload['sdpType'] as String? ?? 'answer';
-
       await _pc!.setRemoteDescription(RTCSessionDescription(sdp, type));
       await _drainPendingCandidates();
-
-      debugPrint('[RTC] SDP answer applied');
     } catch (e) {
       debugPrint('[RTC] handleSdpAnswer error: $e');
     }
@@ -484,12 +656,9 @@ class RtcService extends ChangeNotifier {
     };
 
     _pc!.onTrack = (RTCTrackEvent event) {
-      debugPrint('[RTC] Remote track: ${event.track.kind}');
       if (event.streams.isNotEmpty) {
         _remoteStream = event.streams[0];
-        if (event.track.kind == 'video') {
-          _hasRemoteVideo = true;
-        }
+        if (event.track.kind == 'video') _hasRemoteVideo = true;
         notifyListeners();
 
         _eventController.add(RtcEvent(
@@ -503,43 +672,32 @@ class RtcService extends ChangeNotifier {
     };
 
     _pc!.onIceConnectionState = (state) {
-      debugPrint('[RTC] ICE state: $state');
       if (state == RTCIceConnectionState.RTCIceConnectionStateFailed) {
         endCall(reason: 'ice-failed');
       }
     };
 
     _pc!.onConnectionState = (state) {
-      debugPrint('[RTC] Connection state: $state');
       switch (state) {
         case RTCPeerConnectionState.RTCPeerConnectionStateConnected:
           _callState = AppConstants.callStateConnected;
           _callStartedAt ??= DateTime.now();
-
-          // ✅ حدّث السجل إلى connected
           _updateCallLogState(AppConstants.callStateConnected);
-
           notifyListeners();
           break;
         case RTCPeerConnectionState.RTCPeerConnectionStateDisconnected:
         case RTCPeerConnectionState.RTCPeerConnectionStateFailed:
         case RTCPeerConnectionState.RTCPeerConnectionStateClosed:
-          if (isInCall) {
-            endCall(reason: 'disconnected');
-          }
+          if (isInCall) endCall(reason: 'disconnected');
           break;
         default:
           break;
       }
     };
-
-    _pc!.onRenegotiationNeeded = () {
-      debugPrint('[RTC] Renegotiation needed');
-    };
   }
 
   // ============================================
-  // === الوسائط المحلية ===
+  // === الوسائط ===
   // ============================================
 
   Future<void> _openLocalMedia(String callType) async {
@@ -559,7 +717,6 @@ class RtcService extends ChangeNotifier {
 
   Future<void> _addLocalTracks() async {
     if (_localStream == null || _pc == null) return;
-
     for (final track in _localStream!.getTracks()) {
       await _pc!.addTrack(track, _localStream!);
     }
@@ -580,7 +737,6 @@ class RtcService extends ChangeNotifier {
 
   Future<void> toggleVideo() async {
     if (_localStream == null) return;
-
     final videoTracks = _localStream!.getVideoTracks();
 
     if (videoTracks.isEmpty && !_isVideoEnabled) {
@@ -599,7 +755,6 @@ class RtcService extends ChangeNotifier {
       }
       _isVideoEnabled = !_isVideoEnabled;
     }
-
     notifyListeners();
   }
 
@@ -630,17 +785,15 @@ class RtcService extends ChangeNotifier {
   Future<void> endCall({String reason = 'user-hangup'}) async {
     if (!isInCall) return;
 
-    // حدّد الحالة النهائية
     String finalState;
     if (_callStartedAt != null) {
-      finalState = AppConstants.callStateEnded; // مكالمة تمت فعلًا
+      finalState = AppConstants.callStateEnded;
     } else if (reason == 'disconnected' || reason == 'ice-failed') {
-      finalState = AppConstants.callStateDeclined; // فشل الاتصال
+      finalState = AppConstants.callStateDeclined;
     } else {
-      finalState = AppConstants.callStateMissed; // لم يُرد
+      finalState = AppConstants.callStateMissed;
     }
 
-    // سجّل قبل إبلاغ الطرف الآخر
     await _saveCallLogEnd(state: finalState);
 
     if (_signaling != null && _peerDeviceId.isNotEmpty) {
@@ -662,16 +815,16 @@ class RtcService extends ChangeNotifier {
       reason: reason,
     ));
 
+    await _dismissCallkit();
     await _cleanup();
     _resetState();
     notifyListeners();
   }
 
   // ============================================
-  // === تسجيل المكالمات في DB ===
+  // === تسجيل المكالمات ===
   // ============================================
 
-  /// تسجيل بدء مكالمة جديدة
   Future<void> _logCallStart({required String direction}) async {
     try {
       await DatabaseHelper.instance.insertCallLog({
@@ -685,13 +838,11 @@ class RtcService extends ChangeNotifier {
             DateTime.now().millisecondsSinceEpoch,
         'duration_seconds': 0,
       });
-      debugPrint('[RTC] Call logged: $_currentCallId ($direction)');
     } catch (e) {
       debugPrint('[RTC] logCallStart error: $e');
     }
   }
 
-  /// تحديث حالة السجل (مثلاً من ringing → connected)
   Future<void> _updateCallLogState(String state) async {
     try {
       await DatabaseHelper.instance.updateCallLog(
@@ -705,10 +856,8 @@ class RtcService extends ChangeNotifier {
     }
   }
 
-  /// إنهاء السجل
   Future<void> _saveCallLogEnd({required String state}) async {
     if (_currentCallId.isEmpty) return;
-
     try {
       final endTime = DateTime.now();
       final duration = _callStartedAt != null
@@ -721,7 +870,6 @@ class RtcService extends ChangeNotifier {
         endedAt: endTime.millisecondsSinceEpoch,
         durationSeconds: duration,
       );
-      debugPrint('[RTC] Call log ended: $_currentCallId, state=$state');
     } catch (e) {
       debugPrint('[RTC] saveCallLogEnd error: $e');
     }
@@ -795,6 +943,7 @@ class RtcService extends ChangeNotifier {
   @override
   void dispose() {
     _messageSub?.cancel();
+    _callkitSub?.cancel();
     _cleanup();
     _eventController.close();
     super.dispose();
@@ -807,6 +956,7 @@ class RtcService extends ChangeNotifier {
 
 enum RtcEventType {
   incomingCall,
+  callAccepted,
   callEnded,
   remoteStream,
   error,
