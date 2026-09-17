@@ -3,6 +3,7 @@
 /// ============================================================
 class DiscoveredDevice {
   final String deviceId;
+  final String number; // ← جديد: رقم الاتصال (مثل 4500)
   final String name;
   final String ip;
   final int port;
@@ -12,6 +13,7 @@ class DiscoveredDevice {
 
   const DiscoveredDevice({
     required this.deviceId,
+    required this.number,
     required this.name,
     required this.ip,
     required this.port,
@@ -22,6 +24,7 @@ class DiscoveredDevice {
 
   DiscoveredDevice copyWith({
     String? deviceId,
+    String? number,
     String? name,
     String? ip,
     int? port,
@@ -31,6 +34,7 @@ class DiscoveredDevice {
   }) {
     return DiscoveredDevice(
       deviceId: deviceId ?? this.deviceId,
+      number: number ?? this.number,
       name: name ?? this.name,
       ip: ip ?? this.ip,
       port: port ?? this.port,
@@ -40,13 +44,13 @@ class DiscoveredDevice {
     );
   }
 
-  /// هل يدعم هذا الجهاز مكالمات الفيديو؟
   bool get supportsVideo => capabilities.contains('video');
-
-  /// هل يدعم المكالمات الصوتية؟
   bool get supportsVoice => capabilities.contains('voice');
+
+  /// هل الرقم صالح؟
+  bool get hasValidNumber => number.isNotEmpty && number != '----';
 
   @override
   String toString() =>
-      'DiscoveredDevice($name, $ip:$port, online=$isOnline)';
+      'DiscoveredDevice($name, #$number, $ip:$port, online=$isOnline)';
 }
