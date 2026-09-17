@@ -457,6 +457,7 @@ class MessageService extends ChangeNotifier {
     required String body,
   }) async {
     try {
+      // 1) إذا المحادثة مفتوحة حاليًا → لا إشعار
       if (_lifecycle != null &&
           _lifecycle!.isInForeground &&
           _lifecycle!.isChatOpen(peerDeviceId)) {
@@ -464,9 +465,15 @@ class MessageService extends ChangeNotifier {
         return;
       }
 
+      // 2) احصل على معلومات الجهاز
       final peer = _discovery?.getDevice(peerDeviceId);
-      if (peer == null) return;
+      if (peer == null) {
+        debugPrint('[Messages] Peer not found for notification');
+        return;
+      }
 
+      // 3) اعرض الإشعار
+      // الخدمة تتحقق من إعدادات الإشعارات لكل جهاز داخليًا
       await LocalNotificationService.instance.showMessageNotification(
         peerDeviceId: peerDeviceId,
         peerName: peer.name,
@@ -561,6 +568,7 @@ class MessageService extends ChangeNotifier {
 
     await DatabaseHelper.instance.resetUnread(conversationId);
 
+    // ✅ ألغِ إشعار هذه المحادثة
     await LocalNotificationService.instance
         .cancelForDevice(peerDeviceId);
 
