@@ -29,6 +29,7 @@ class DatabaseHelper {
   static const String tableConversations = 'conversations';
   static const String tableMessages = 'messages';
   static const String tableCallLogs = 'call_logs';
+  static const String tableNotifSettings = 'notification_settings';
 
   // ============================================
   // === التهيئة ===
@@ -87,7 +88,7 @@ class DatabaseHelper {
       )
     ''');
 
-    // جدول الرسائل (مع is_pinned)
+    // جدول الرسائل
     await db.execute('''
       CREATE TABLE $tableMessages (
         message_id       TEXT PRIMARY KEY,
@@ -125,6 +126,20 @@ class DatabaseHelper {
         started_at       INTEGER NOT NULL,
         ended_at         INTEGER,
         duration_seconds INTEGER NOT NULL DEFAULT 0
+      )
+    ''');
+
+    // ✅ جدول إعدادات الإشعارات (جديد)
+    await db.execute('''
+      CREATE TABLE $tableNotifSettings (
+        device_id      TEXT PRIMARY KEY,
+        enabled        INTEGER NOT NULL DEFAULT 1,
+        sound          INTEGER NOT NULL DEFAULT 1,
+        vibration      INTEGER NOT NULL DEFAULT 1,
+        created_at     INTEGER NOT NULL,
+        updated_at     INTEGER NOT NULL,
+        FOREIGN KEY (device_id) REFERENCES $tableDevices(device_id)
+          ON DELETE CASCADE
       )
     ''');
 
@@ -176,6 +191,22 @@ class DatabaseHelper {
         'CREATE INDEX idx_messages_pinned ON $tableMessages(is_pinned)',
       );
     }
+
+    // v3 → v4: إضافة إعدادات الإشعارات
+    if (oldVersion < 4) {
+      await db.execute('''
+        CREATE TABLE $tableNotifSettings (
+          device_id      TEXT PRIMARY KEY,
+          enabled        INTEGER NOT NULL DEFAULT 1,
+          sound          INTEGER NOT NULL DEFAULT 1,
+          vibration      INTEGER NOT NULL DEFAULT 1,
+          created_at     INTEGER NOT NULL,
+          updated_at     INTEGER NOT NULL,
+          FOREIGN KEY (device_id) REFERENCES $tableDevices(device_id)
+            ON DELETE CASCADE
+        )
+      ''');
+    }
   }
 
   // ============================================
@@ -189,6 +220,7 @@ class DatabaseHelper {
   Future<void> wipeAll() async {
     await db.delete(tableMessages);
     await db.delete(tableConversations);
+    await db.delete(tableNotifSettings);
     await db.delete(tableDevices);
     await db.delete(tableCallLogs);
   }
@@ -349,7 +381,7 @@ class DatabaseHelper {
   }
 
   // ============================================
-  // === إدارة المحادثات: تثبيت / أرشفة ===
+  // === إدارة المحادثات ===
   // ============================================
 
   Future<List<Map<String, dynamic>>> getVisibleConversations() async {
@@ -548,10 +580,9 @@ class DatabaseHelper {
   }
 
   // ============================================
-  // === تثبيت الرسائل (جديد) ===
+  // === تثبيت الرسائل ===
   // ============================================
 
-  /// تفعيل/إلغاء تثبيت رسالة
   Future<int> toggleMessagePin(String messageId, bool isPinned) async {
     return db.update(
       tableMessages,
@@ -561,7 +592,6 @@ class DatabaseHelper {
     );
   }
 
-  /// هل الرسالة مثبتة؟
   Future<bool> isMessagePinned(String messageId) async {
     final result = await db.query(
       tableMessages,
@@ -574,7 +604,6 @@ class DatabaseHelper {
     return (result.first['is_pinned'] as int?) == 1;
   }
 
-  /// كل الرسائل المثبتة في محادثة (الأحدث أولًا)
   Future<List<Map<String, dynamic>>> getPinnedMessages(
     String conversationId,
   ) async {
@@ -586,7 +615,6 @@ class DatabaseHelper {
     );
   }
 
-  /// عدد الرسائل المثبتة في محادثة
   Future<int> getPinnedMessagesCount(String conversationId) async {
     final result = await db.rawQuery(
       'SELECT COUNT(*) as count FROM $tableMessages '
@@ -596,7 +624,6 @@ class DatabaseHelper {
     return (result.first['count'] as int?) ?? 0;
   }
 
-  /// إلغاء تثبيت كل الرسائل في محادثة
   Future<int> unpinAllMessages(String conversationId) async {
     return db.update(
       tableMessages,
@@ -604,6 +631,78 @@ class DatabaseHelper {
       where: 'conversation_id = ? AND is_pinned = 1',
       whereArgs: [conversationId],
     );
+  }
+
+  // ============================================
+  // === إعدادات الإشعارات (جديد) ===
+  // ============================================
+
+  /// احصل على إعدادات الإشعارات لجهاز معين
+  /// إذا لم تكن موجودة، يُرجع القيم الافتراضية
+  Future<Map<String, dynamic>> getNotificationSettings(
+    String deviceId,
+  ) async {
+    final rows = await db.query(
+      tableNotifSettings,
+      where: 'device_id = ?',
+      whereArgs: [deviceId],
+      limit: 1,
+    );
+
+    if (rows.isEmpty) {
+      // القيم الافتراضية
+      return {
+        'device_id': deviceId,
+        'enabled': 1,
+        'sound': 1,
+        'vibration': 1,
+      };
+    }
+
+    return rows.first;
+  }
+
+  /// حفظ/تحديث إعدادات الإشعارات
+  Future<int> upsertNotificationSettings({
+    required String deviceId,
+    required bool enabled,
+    required bool sound,
+    required bool vibration,
+  }) async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+
+    return db.insert(
+      tableNotifSettings,
+      {
+        'device_id': deviceId,
+        'enabled': enabled ? 1 : 0,
+        'sound': sound ? 1 : 0,
+        'vibration': vibration ? 1 : 0,
+        'created_at': now,
+        'updated_at': now,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  /// احصل على إعدادات كل الأجهزة (خريطة deviceId → settings)
+  Future<Map<String, Map<String, dynamic>>> getAllNotificationSettings() async {
+    final rows = await db.query(tableNotifSettings);
+    final map = <String, Map<String, dynamic>>{};
+    for (final row in rows) {
+      map[row['device_id'] as String] = row;
+    }
+    return map;
+  }
+
+  /// احصل على قائمة الأجهزة التي أُسكتت (enabled = 0)
+  Future<Set<String>> getMutedDeviceIds() async {
+    final rows = await db.query(
+      tableNotifSettings,
+      columns: ['device_id'],
+      where: 'enabled = 0',
+    );
+    return rows.map((r) => r['device_id'] as String).toSet();
   }
 
   // ============================================
