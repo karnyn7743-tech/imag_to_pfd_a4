@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../core/constants.dart';
 import '../../core/discovery/device_discovery.dart';
 import '../../core/rtc/rtc_service.dart';
+import '../../core/services/ringtone_service.dart';
 import '../theme/app_theme.dart';
 import 'audio_call_screen.dart';
 import 'video_call_screen.dart';
@@ -11,9 +12,8 @@ import 'video_call_screen.dart';
 /// ============================================================
 /// شاشة المكالمة الواردة (Fallback)
 /// --------------------------------------------------------
-/// ملاحظة: مع استخدام flutter_callkit_incoming، يتم عرض
-/// واجهة المكالمة الواردة عبر النظام مباشرةً. هذه الشاشة
-/// تبقى كنسخة احتياطية فقط.
+/// ملاحظة: مع flutter_callkit_incoming، واجهة المكالمة
+/// الواردة تُعرض عبر النظام مباشرة. هذه الشاشة احتياطية.
 /// ============================================================
 class IncomingCallScreen extends StatefulWidget {
   final String callId;
@@ -35,8 +35,17 @@ class IncomingCallScreen extends StatefulWidget {
 
 class _IncomingCallScreenState extends State<IncomingCallScreen>
     with SingleTickerProviderStateMixin {
+  // ============================================
+  // === المراجع ===
+  // ============================================
+  RingtoneService? _ringtoneService; // ✅ جديد
+
   late AnimationController _pulseController;
   bool _isHandling = false;
+
+  // ============================================
+  // === دورة الحياة ===
+  // ============================================
 
   @override
   void initState() {
@@ -46,10 +55,19 @@ class _IncomingCallScreenState extends State<IncomingCallScreen>
       vsync: this,
       duration: const Duration(milliseconds: 1500),
     )..repeat(reverse: true);
+
+    // ✅ احفظ المرجع قبل postFrameCallback
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      _ringtoneService = context.read<RingtoneService>();
+      await _ringtoneService!.startRinging();
+    });
   }
 
   @override
   void dispose() {
+    // ✅ استخدم المرجع المحفوظ بدل context
+    _ringtoneService?.stopRinging();
     _pulseController.dispose();
     super.dispose();
   }
@@ -61,6 +79,8 @@ class _IncomingCallScreenState extends State<IncomingCallScreen>
   Future<void> _accept() async {
     if (_isHandling) return;
     _isHandling = true;
+
+    _ringtoneService?.stopRinging();
 
     final rtc = context.read<RtcService>();
     final ok = await rtc.acceptCall();
@@ -102,6 +122,8 @@ class _IncomingCallScreenState extends State<IncomingCallScreen>
   Future<void> _reject() async {
     if (_isHandling) return;
     _isHandling = true;
+
+    _ringtoneService?.stopRinging();
 
     await context.read<RtcService>().rejectCall();
 
@@ -180,12 +202,11 @@ class _IncomingCallScreenState extends State<IncomingCallScreen>
                       ),
                       const SizedBox(height: 32),
 
-                      // الأفاتار
                       AnimatedBuilder(
                         animation: _pulseController,
                         builder: (context, child) {
-                          final scale = 1.0 +
-                              (_pulseController.value * 0.08);
+                          final scale =
+                              1.0 + (_pulseController.value * 0.08);
                           return Transform.scale(
                             scale: scale,
                             child: child,
