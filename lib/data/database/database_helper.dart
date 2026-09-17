@@ -581,4 +581,67 @@ class DatabaseHelper {
       whereArgs: [callId],
     );
   }
+
+  // ============================================
+  // === البحث العالمي (جديد) ===
+  // ============================================
+
+  /// بحث في كل الرسائل عبر كل المحادثات
+  ///
+  /// يبحث في:
+  /// - محتوى الرسائل النصية (body)
+  /// - أسماء الملفات (file_name)
+  Future<List<Map<String, dynamic>>> searchMessages({
+    required String query,
+    int limit = 200,
+  }) async {
+    if (query.trim().isEmpty) return [];
+
+    final q = '%${query.toLowerCase().trim()}%';
+
+    return db.rawQuery('''
+      SELECT 
+        m.*,
+        d.name AS peer_name,
+        d.number AS peer_number,
+        d.device_id AS peer_id,
+        c.peer_device_id AS conversation_peer_id
+      FROM $tableMessages m
+      LEFT JOIN $tableConversations c 
+        ON m.conversation_id = c.conversation_id
+      LEFT JOIN $tableDevices d 
+        ON c.peer_device_id = d.device_id
+      WHERE 
+        (m.type = 'text' AND LOWER(m.body) LIKE ?) OR
+        (m.type = 'file' AND LOWER(m.file_name) LIKE ?)
+      ORDER BY m.created_at DESC
+      LIMIT ?
+    ''', [q, q, limit]);
+  }
+
+  /// إحصائيات سريعة عن النتائج
+  Future<Map<String, int>> getSearchStats(String query) async {
+    if (query.trim().isEmpty) {
+      return {'total': 0, 'conversations': 0};
+    }
+
+    final q = '%${query.toLowerCase().trim()}%';
+
+    final result = await db.rawQuery('''
+      SELECT 
+        COUNT(*) AS total,
+        COUNT(DISTINCT m.conversation_id) AS conversations
+      FROM $tableMessages m
+      WHERE 
+        (m.type = 'text' AND LOWER(m.body) LIKE ?) OR
+        (m.type = 'file' AND LOWER(m.file_name) LIKE ?)
+    ''', [q, q]);
+
+    if (result.isEmpty) return {'total': 0, 'conversations': 0};
+
+    return {
+      'total': (result.first['total'] as int?) ?? 0,
+      'conversations': (result.first['conversations'] as int?) ?? 0,
+    };
+  }
 }
