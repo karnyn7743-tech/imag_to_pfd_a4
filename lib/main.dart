@@ -14,6 +14,7 @@ import 'core/providers/theme_provider.dart';
 import 'core/rtc/rtc_service.dart';
 import 'core/services/activation_service.dart';
 import 'core/services/app_lifecycle_service.dart';
+import 'core/services/broadcast_service.dart';
 import 'core/services/local_notification_service.dart';
 import 'core/services/lock_service.dart';
 import 'core/services/notification_service.dart';
@@ -23,11 +24,13 @@ import 'core/signaling/signaling_service.dart';
 import 'data/database/database_helper.dart';
 import 'ui/screens/activation_screen.dart';
 import 'ui/screens/audio_call_screen.dart';
+import 'ui/screens/broadcast_screen.dart';
 import 'ui/screens/chat_screen.dart';
 import 'ui/screens/lock_screen.dart';
 import 'ui/screens/splash_screen.dart';
 import 'ui/screens/video_call_screen.dart';
 import 'ui/theme/app_theme.dart';
+import 'ui/widgets/incoming_broadcast_dialog.dart';
 
 // ============================================================
 // === مفتاح التنقل العام ===
@@ -116,7 +119,7 @@ class LanPhoneApp extends StatelessWidget {
         ),
 
         // ==========================================
-        // 5) ✅ خدمة التنشيط
+        // 5) خدمة التنشيط
         // ==========================================
         ChangeNotifierProvider<ActivationService>(
           create: (_) => ActivationService(),
@@ -161,7 +164,22 @@ class LanPhoneApp extends StatelessWidget {
         ),
 
         // ==========================================
-        // 10) الرسائل
+        // 10) ✅ خدمة البث الصوتي
+        // ==========================================
+        ChangeNotifierProxyProvider2<SignalingService, DeviceDiscovery,
+            BroadcastService>(
+          create: (_) => BroadcastService(),
+          update: (_, signaling, discovery, broadcast) {
+            broadcast?.attach(
+              signaling: signaling,
+              discovery: discovery,
+            );
+            return broadcast ?? BroadcastService();
+          },
+        ),
+
+        // ==========================================
+        // 11) الرسائل
         // ==========================================
         ChangeNotifierProxyProvider3<
             DeviceDiscovery,
@@ -196,9 +214,15 @@ class _AppRootState extends State<_AppRoot> {
   // === المراجع ===
   // ============================================
   StreamSubscription<RtcEvent>? _rtcSub;
+  StreamSubscription<BroadcastEvent>? _broadcastSub;
+
   RtcService? _rtc;
+  BroadcastService? _broadcastService;
   DeviceDiscovery? _discovery;
+
   bool _callScreenOpen = false;
+  bool _broadcastDialogOpen = false;
+  bool _broadcastScreenOpen = false;
 
   // ============================================
   // === دورة الحياة ===
@@ -211,12 +235,14 @@ class _AppRootState extends State<_AppRoot> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _setupListeners();
       _setupNotificationTapHandler();
+      _setupBroadcastListener();
     });
   }
 
   @override
   void dispose() {
     _rtcSub?.cancel();
+    _broadcastSub?.cancel();
     super.dispose();
   }
 
@@ -240,8 +266,14 @@ class _AppRootState extends State<_AppRoot> {
     };
   }
 
+  void _setupBroadcastListener() {
+    if (!mounted) return;
+    _broadcastService = context.read<BroadcastService>();
+    _broadcastSub = _broadcastService!.events.listen(_onBroadcastEvent);
+  }
+
   // ============================================
-  // === فتح محادثة من إشعار ===
+  // === الإشعارات ===
   // ============================================
 
   void _openChatFromNotification(
@@ -256,10 +288,6 @@ class _AppRootState extends State<_AppRoot> {
       debugPrint('[AppRoot] Peer not found: $peerDeviceId');
       return;
     }
-
-    debugPrint(
-      '[AppRoot] Opening chat from notification: $peerDeviceId',
-    );
 
     nav.push(
       MaterialPageRoute(
@@ -278,7 +306,6 @@ class _AppRootState extends State<_AppRoot> {
   void _onRtcEvent(RtcEvent event) {
     switch (event.type) {
       case RtcEventType.incomingCall:
-        // Callkit يعرض الواجهة تلقائيًا
         debugPrint('[AppRoot] Incoming call — Callkit handles UI');
         break;
 
@@ -320,6 +347,168 @@ class _AppRootState extends State<_AppRoot> {
   }
 
   // ============================================
+  // === أحداث البث (جديد) ===
+  // ============================================
+
+  void _onBroadcastEvent(BroadcastEvent event) {
+    switch (event.type) {
+      case BroadcastEventType.invitation:
+        _showBroadcastInvitation(event);
+        break;
+
+      case BroadcastEventType.ended:
+        _handleBroadcastEnded(event);
+        break;
+
+      case BroadcastEventType.disconnected:
+        _handleBroadcastDisconnected(event);
+        break;
+
+      case BroadcastEventType.audioReceived:
+        // يُعالج تلقائيًا من BroadcastScreen
+        break;
+    }
+  }
+
+  /// عرض دعوة بث واردة
+  void _showBroadcastInvitation(BroadcastEvent event) {
+    if (_broadcastDialogOpen) {
+      // رفض تلقائي إذا كان هناك حوار آخر مفتوح
+      _broadcastService?.rejectBroadcast(
+        event.broadcastId,
+        event.peerDeviceId,
+      );
+      return;
+    }
+
+    if (_callScreenOpen) {
+      // رفض إذا كانت هناك مكالمة
+      _broadcastService?.rejectBroadcast(
+        event.broadcastId,
+        event.peerDeviceId,
+      );
+      return;
+    }
+
+    final nav = navigatorKey.currentState;
+    if (nav == null) return;
+
+    _broadcastDialogOpen = true;
+
+    showDialog(
+      context: nav.overlay!.context,
+      barrierDismissible: false,
+      builder: (_) => IncomingBroadcastDialog(
+        event: event,
+        onResult: (accept) {
+          _broadcastDialogOpen = false;
+          if (accept) {
+            _acceptBroadcast(event);
+          } else {
+            _broadcastService?.rejectBroadcast(
+              event.broadcastId,
+              event.peerDeviceId,
+            );
+          }
+        },
+      ),
+    );
+  }
+
+  Future<void> _acceptBroadcast(BroadcastEvent event) async {
+    final nav = navigatorKey.currentState;
+    if (nav == null) return;
+
+    final ok = await _broadcastService!.acceptBroadcast(
+      broadcastId: event.broadcastId,
+      broadcasterDeviceId: event.peerDeviceId,
+      broadcasterName: event.peerName,
+      sdp: event.sdp ?? '',
+      sdpType: event.sdpType ?? 'offer',
+    );
+
+    if (!ok) {
+      nav.overlay?.context;
+      ScaffoldMessenger.of(nav.overlay!.context).showSnackBar(
+        const SnackBar(
+          content: Text('تعذّر الانضمام للبث'),
+          backgroundColor: AppTheme.errorColor,
+        ),
+      );
+      return;
+    }
+
+    // افتح شاشة الاستماع
+    _openBroadcastScreen();
+  }
+
+  /// انتهى البث من المُذيع
+  void _handleBroadcastEnded(BroadcastEvent event) {
+    if (_broadcastService?.isBroadcasting ?? false) {
+      // نحن المُذيع — لا شيء
+      return;
+    }
+
+    final nav = navigatorKey.currentState;
+    if (nav == null) return;
+
+    // أغلق شاشة الاستماع
+    if (_broadcastScreenOpen) {
+      nav.pop();
+      _broadcastScreenOpen = false;
+    }
+
+    // رسالة
+    ScaffoldMessenger.of(nav.overlay!.context).showSnackBar(
+      SnackBar(
+        content: Text('انتهى بث ${event.peerName}'),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  /// فُقد الاتصال بالبث
+  void _handleBroadcastDisconnected(BroadcastEvent event) {
+    if (!(_broadcastService?.isListening ?? false)) return;
+
+    final nav = navigatorKey.currentState;
+    if (nav == null) return;
+
+    if (_broadcastScreenOpen) {
+      nav.pop();
+      _broadcastScreenOpen = false;
+    }
+
+    ScaffoldMessenger.of(nav.overlay!.context).showSnackBar(
+      SnackBar(
+        content: Text('انقطع الاتصال ببث ${event.peerName}'),
+        backgroundColor: AppTheme.warningColor,
+        duration: const Duration(seconds: 3),
+      ),
+    );
+  }
+
+  /// فتح شاشة البث/الاستماع
+  void _openBroadcastScreen() {
+    if (_broadcastScreenOpen) return;
+
+    final nav = navigatorKey.currentState;
+    if (nav == null) return;
+
+    _broadcastScreenOpen = true;
+
+    nav
+        .push(
+      MaterialPageRoute(
+        builder: (_) => const BroadcastScreen(),
+      ),
+    )
+        .then((_) {
+      _broadcastScreenOpen = false;
+    });
+  }
+
+  // ============================================
   // === الواجهة ===
   // ============================================
 
@@ -345,9 +534,7 @@ class _AppRootState extends State<_AppRoot> {
         GlobalCupertinoLocalizations.delegate,
       ],
 
-      // ==========================================
-      // ✅ بوابة التنشيط + القفل
-      // ==========================================
+      // بوابة التنشيط + القفل
       builder: (context, child) {
         return _AppGates(child: child ?? const SizedBox.shrink());
       },
@@ -367,32 +554,20 @@ class _AppGates extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // ============================================
-    // === 1) فحص التنشيط ===
-    // ============================================
+    // 1) فحص التنشيط
     final activation = context.watch<ActivationService>();
 
-    // جارٍ التحقق → عرض شاشة تحميل
     if (activation.checking) {
       return const _LoadingGate();
     }
 
-    // غير مُنشَّط → شاشة التنشيط
     if (!activation.activated) {
       return const ActivationScreen();
     }
 
-    // ============================================
-    // === 2) بوابة القفل (فقط إذا نشِط) ===
-    // ============================================
-    final locked = context.select<LockService, bool>(
-      (s) => s.isLocked,
-    );
-
-    // أثناء مكالمة نشطة → لا تقفل
-    final inCall = context.select<RtcService, bool>(
-      (r) => r.isInCall,
-    );
+    // 2) بوابة القفل
+    final locked = context.select<LockService, bool>((s) => s.isLocked);
+    final inCall = context.select<RtcService, bool>((r) => r.isInCall);
 
     return Stack(
       children: [
@@ -428,10 +603,7 @@ class _LoadingGate extends StatelessWidget {
             SizedBox(height: 20),
             Text(
               'جارٍ التحقق...',
-              style: TextStyle(
-                color: Colors.white70,
-                fontSize: 14,
-              ),
+              style: TextStyle(color: Colors.white70, fontSize: 14),
             ),
           ],
         ),
