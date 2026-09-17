@@ -21,29 +21,20 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
-  // ============================================
-  // === الحالة ===
-  // ============================================
   bool _isLoading = true;
 
-  // الإعدادات
   String _deviceName = '';
   String _deviceId = '';
+  String _deviceNumber = '';
   String _localIp = '';
   String _themeMode = 'system';
   bool _vibrationEnabled = true;
   bool _soundEnabled = true;
 
-  // ============================================
-  // === دورة الحياة ===
-  // ============================================
-
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _loadSettings();
-    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadSettings());
   }
 
   Future<void> _loadSettings() async {
@@ -55,6 +46,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       setState(() {
         _deviceName = discovery.deviceName;
         _deviceId = discovery.deviceId;
+        _deviceNumber = discovery.deviceNumber;
         _localIp = discovery.localIp;
         _themeMode = prefs.getString(AppConstants.keyThemeMode) ?? 'system';
         _vibrationEnabled = prefs.getBool(AppConstants.keyVibration) ?? true;
@@ -103,20 +95,109 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
     );
 
-    // حرّر وحدة التحكم بعد إغلاق الحوار
     controller.dispose();
 
-    if (newName == null || newName.isEmpty || newName == _deviceName) {
-      return;
-    }
+    if (newName == null || newName.isEmpty || newName == _deviceName) return;
 
     final discovery = context.read<DeviceDiscovery>();
     await discovery.updateDeviceName(newName);
 
     if (!mounted) return;
     setState(() => _deviceName = newName);
-
     _showSnack('تم تحديث اسم الجهاز', isSuccess: true);
+  }
+
+  // ============================================
+  // === تعديل رقم الاتصال ===
+  // ============================================
+
+  Future<void> _editDeviceNumber() async {
+    final controller = TextEditingController(text: _deviceNumber);
+
+    final newNumber = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('رقم الاتصال'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'اختر رقمًا من 1000 إلى 9999.\n'
+              'يجب أن يكون فريدًا على الشبكة.',
+              style: TextStyle(fontSize: 13),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: controller,
+              autofocus: true,
+              keyboardType: TextInputType.number,
+              maxLength: 4,
+              inputFormatters: [
+                FilteringTextInputFormatter.digitsOnly,
+                LengthLimitingTextInputFormatter(4),
+              ],
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 32,
+                letterSpacing: 8,
+                fontWeight: FontWeight.bold,
+                fontFeatures: [FontFeature.tabularFigures()],
+              ),
+              decoration: const InputDecoration(
+                hintText: '----',
+                counterText: '',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text('حفظ'),
+          ),
+        ],
+      ),
+    );
+
+    controller.dispose();
+
+    if (newNumber == null || newNumber.isEmpty || newNumber == _deviceNumber) {
+      return;
+    }
+
+    // التحقق من الصيغة
+    if (newNumber.length != 4) {
+      _showSnack('الرقم يجب أن يكون 4 أرقام');
+      return;
+    }
+
+    final parsed = int.tryParse(newNumber);
+    if (parsed == null ||
+        parsed < AppConstants.numberMin ||
+        parsed > AppConstants.numberMax) {
+      _showSnack(
+        'الرقم يجب أن يكون بين ${AppConstants.numberMin} و${AppConstants.numberMax}',
+      );
+      return;
+    }
+
+    // محاولة التحديث
+    final discovery = context.read<DeviceDiscovery>();
+    final ok = await discovery.updateDeviceNumber(newNumber);
+
+    if (!mounted) return;
+
+    if (ok) {
+      setState(() => _deviceNumber = newNumber);
+      _showSnack('تم تحديث رقم الاتصال', isSuccess: true);
+    } else {
+      _showSnack('الرقم مستخدم من قِبل جهاز آخر');
+    }
   }
 
   // ============================================
@@ -161,15 +242,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
       message: 'نحتاج الإذن لعرض إشعارات المكالمات والرسائل',
       icon: Icons.notifications_outlined,
     );
-
     if (!mounted) return;
-    if (granted) {
-      _showSnack('الإشعارات مفعّلة', isSuccess: true);
-    }
+    if (granted) _showSnack('الإشعارات مفعّلة', isSuccess: true);
   }
 
   // ============================================
-  // === معلومات الشبكة ===
+  // === نسخ ===
   // ============================================
 
   Future<void> _copyToClipboard(String text, String label) async {
@@ -179,7 +257,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   // ============================================
-  // === إدارة التخزين ===
+  // === إعادة تعيين ===
   // ============================================
 
   Future<void> _clearAllData() async {
@@ -218,17 +296,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (confirm != true) return;
 
     try {
-      // ✅ امسح كل البيانات من قاعدة البيانات
       await DatabaseHelper.instance.wipeAll();
-
       if (!mounted) return;
-
       _showSnack('تم حذف جميع البيانات', isSuccess: true);
-
-      // انتظر قليلًا ثم أعد تحميل الإعدادات
       await Future.delayed(const Duration(milliseconds: 800));
       if (!mounted) return;
-
       await _loadSettings();
     } catch (e) {
       debugPrint('[Settings] clearAllData error: $e');
@@ -236,10 +308,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _showSnack('فشل حذف البيانات: $e');
     }
   }
-
-  // ============================================
-  // === أدوات ===
-  // ============================================
 
   void _showSnack(String message, {bool isSuccess = false}) {
     if (!mounted) return;
@@ -259,9 +327,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('الإعدادات'),
-      ),
+      appBar: AppBar(title: const Text('الإعدادات')),
       body: _isLoading
           ? const Center(
               child: CircularProgressIndicator(color: AppTheme.primaryColor),
@@ -269,41 +335,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
           : ListView(
               padding: const EdgeInsets.symmetric(vertical: 8),
               children: [
-                // ============================================
-                // === قسم رأس الجهاز ===
-                // ============================================
                 _buildDeviceHeader(),
-
-                // ============================================
-                // === قسم المظهر ===
-                // ============================================
+                const _SectionTitle(title: 'رقم الاتصال'),
+                _buildNumberSection(),
                 const _SectionTitle(title: 'المظهر'),
                 _buildThemeSection(),
-
-                // ============================================
-                // === قسم الإشعارات ===
-                // ============================================
                 const _SectionTitle(title: 'الإشعارات والأصوات'),
                 _buildNotificationsSection(),
-
-                // ============================================
-                // === قسم الشبكة ===
-                // ============================================
                 const _SectionTitle(title: 'معلومات الشبكة'),
                 _buildNetworkSection(),
-
-                // ============================================
-                // === قسم البيانات ===
-                // ============================================
                 const _SectionTitle(title: 'البيانات'),
                 _buildDataSection(),
-
-                // ============================================
-                // === قسم عن التطبيق ===
-                // ============================================
                 const _SectionTitle(title: 'عن التطبيق'),
                 _buildAboutSection(),
-
                 const SizedBox(height: 32),
               ],
             ),
@@ -311,7 +355,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   // ============================================
-  // === قسم رأس الجهاز ===
+  // === رأس الجهاز ===
   // ============================================
 
   Widget _buildDeviceHeader() {
@@ -338,7 +382,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
       child: Row(
         children: [
-          // الأيقونة
           Container(
             width: 64,
             height: 64,
@@ -358,8 +401,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
           const SizedBox(width: 16),
-
-          // الاسم والحالة
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -386,26 +427,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 const SizedBox(height: 6),
                 const Row(
                   children: [
-                    Icon(
-                      Icons.circle,
-                      size: 8,
-                      color: Colors.greenAccent,
-                    ),
+                    Icon(Icons.circle, size: 8, color: Colors.greenAccent),
                     SizedBox(width: 6),
                     Text(
                       'يعمل',
-                      style: TextStyle(
-                        color: Colors.white70,
-                        fontSize: 12,
-                      ),
+                      style: TextStyle(color: Colors.white70, fontSize: 12),
                     ),
                   ],
                 ),
               ],
             ),
           ),
-
-          // زر التعديل
           Material(
             color: Colors.white.withOpacity(0.15),
             shape: const CircleBorder(),
@@ -428,7 +460,58 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   // ============================================
-  // === قسم المظهر ===
+  // === قسم الرقم ===
+  // ============================================
+
+  Widget _buildNumberSection() {
+    return _SettingsCard(
+      children: [
+        ListTile(
+          leading: Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: AppTheme.primaryColor.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            alignment: Alignment.center,
+            child: Text(
+              _deviceNumber.isEmpty ? '----' : _deviceNumber,
+              style: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: AppTheme.primaryColor,
+                letterSpacing: 1.5,
+                fontFeatures: [FontFeature.tabularFigures()],
+              ),
+            ),
+          ),
+          title: const Text('رقم الاتصال'),
+          subtitle: Text(
+            _deviceNumber.isEmpty
+                ? 'جارٍ التوليد...'
+                : 'رقمك على الشبكة: $_deviceNumber',
+          ),
+          trailing: const Icon(Icons.chevron_left),
+          onTap: _editDeviceNumber,
+        ),
+        ListTile(
+          leading: const Icon(Icons.info_outline, size: 20),
+          title: const Text(
+            'يُستخدم هذا الرقم للاتصال بك',
+            style: TextStyle(fontSize: 13),
+          ),
+          subtitle: const Text(
+            'يجب أن يكون فريدًا على شبكتك',
+            style: TextStyle(fontSize: 12),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ============================================
+  // === المظهر ===
   // ============================================
 
   Widget _buildThemeSection() {
@@ -469,7 +552,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   // ============================================
-  // === قسم الإشعارات ===
+  // === الإشعارات ===
   // ============================================
 
   Widget _buildNotificationsSection() {
@@ -487,7 +570,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           value: _vibrationEnabled,
           onChanged: _toggleVibration,
           title: const Text('الاهتزاز'),
-          subtitle: const Text('اهتزاز الجهاز عند وصول مكالمة أو رسالة'),
+          subtitle: const Text('اهتزاز عند وصول مكالمة أو رسالة'),
           secondary: const Icon(Icons.vibration_outlined),
           contentPadding: const EdgeInsets.symmetric(horizontal: 8),
         ),
@@ -502,7 +585,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   // ============================================
-  // === قسم الشبكة ===
+  // === الشبكة ===
   // ============================================
 
   Widget _buildNetworkSection() {
@@ -540,11 +623,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  // دالة مساعدة: الحد الأدنى بين رقمين
   int _min(int a, int b) => a < b ? a : b;
 
   // ============================================
-  // === قسم البيانات ===
+  // === البيانات ===
   // ============================================
 
   Widget _buildDataSection() {
@@ -567,7 +649,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   // ============================================
-  // === قسم عن التطبيق ===
+  // === عن التطبيق ===
   // ============================================
 
   Widget _buildAboutSection() {
@@ -588,9 +670,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           title: const Text('مفتوح المصدر'),
           subtitle: const Text('مرخّص تحت MIT License'),
           trailing: const Icon(Icons.chevron_left),
-          onTap: () {
-            _showSnack('سيفتح رابط GitHub قريبًا');
-          },
+          onTap: () => _showSnack('سيفتح رابط GitHub قريبًا'),
         ),
       ],
     );
@@ -645,10 +725,7 @@ class _SettingsCard extends StatelessWidget {
           color: isDark ? AppTheme.darkDivider : AppTheme.lightDivider,
         ),
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: children,
-      ),
+      child: Column(mainAxisSize: MainAxisSize.min, children: children),
     );
   }
 }
