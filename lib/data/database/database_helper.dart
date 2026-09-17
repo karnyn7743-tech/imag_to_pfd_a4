@@ -583,14 +583,81 @@ class DatabaseHelper {
   }
 
   // ============================================
-  // === البحث العالمي (جديد) ===
+  // === إحصائيات جهاز معين (جديد) ===
+  // ============================================
+
+  /// عدد الرسائل في محادثة معينة
+  Future<int> getMessageCountForPeer(String peerDeviceId) async {
+    final conv = await getConversationByPeer(peerDeviceId);
+    if (conv == null) return 0;
+
+    final conversationId = conv['conversation_id'] as String;
+
+    final result = await db.rawQuery(
+      'SELECT COUNT(*) as count FROM $tableMessages '
+      'WHERE conversation_id = ?',
+      [conversationId],
+    );
+
+    return (result.first['count'] as int?) ?? 0;
+  }
+
+  /// عدد المكالمات مع جهاز معين
+  Future<int> getCallCountForPeer(String peerDeviceId) async {
+    final result = await db.rawQuery(
+      'SELECT COUNT(*) as count FROM $tableCallLogs '
+      'WHERE peer_device_id = ?',
+      [peerDeviceId],
+    );
+
+    return (result.first['count'] as int?) ?? 0;
+  }
+
+  /// تاريخ أول ظهور للجهاز
+  Future<int?> getFirstSeenForDevice(String deviceId) async {
+    final device = await getDevice(deviceId);
+    if (device == null) return null;
+    return device['created_at'] as int?;
+  }
+
+  /// تفعيل/إلغاء المفضلة
+  Future<int> toggleFavorite(String deviceId, bool isFavorite) async {
+    return db.update(
+      tableDevices,
+      {'is_favorite': isFavorite ? 1 : 0},
+      where: 'device_id = ?',
+      whereArgs: [deviceId],
+    );
+  }
+
+  /// هل هذا الجهاز في المفضلة؟
+  Future<bool> isFavorite(String deviceId) async {
+    final result = await db.query(
+      tableDevices,
+      columns: ['is_favorite'],
+      where: 'device_id = ?',
+      whereArgs: [deviceId],
+      limit: 1,
+    );
+    if (result.isEmpty) return false;
+    return (result.first['is_favorite'] as int?) == 1;
+  }
+
+  /// تعديل اسم جهاز (من شاشة المعلومات)
+  Future<int> updateDeviceName(String deviceId, String newName) async {
+    return db.update(
+      tableDevices,
+      {'name': newName},
+      where: 'device_id = ?',
+      whereArgs: [deviceId],
+    );
+  }
+
+  // ============================================
+  // === البحث العالمي ===
   // ============================================
 
   /// بحث في كل الرسائل عبر كل المحادثات
-  ///
-  /// يبحث في:
-  /// - محتوى الرسائل النصية (body)
-  /// - أسماء الملفات (file_name)
   Future<List<Map<String, dynamic>>> searchMessages({
     required String query,
     int limit = 200,
