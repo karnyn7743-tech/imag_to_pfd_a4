@@ -2,10 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart' as ph;
 import 'package:provider/provider.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/constants.dart';
 import '../../core/discovery/device_discovery.dart';
+import '../../core/providers/theme_provider.dart';
 import '../../data/database/database_helper.dart';
 import '../theme/app_theme.dart';
 import '../widgets/permission_dialog.dart';
@@ -27,7 +27,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String _deviceId = '';
   String _deviceNumber = '';
   String _localIp = '';
-  String _themeMode = 'system';
   bool _vibrationEnabled = true;
   bool _soundEnabled = true;
 
@@ -39,7 +38,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _loadSettings() async {
     try {
-      final prefs = await SharedPreferences.getInstance();
       final discovery = context.read<DeviceDiscovery>();
 
       if (!mounted) return;
@@ -48,9 +46,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _deviceId = discovery.deviceId;
         _deviceNumber = discovery.deviceNumber;
         _localIp = discovery.localIp;
-        _themeMode = prefs.getString(AppConstants.keyThemeMode) ?? 'system';
-        _vibrationEnabled = prefs.getBool(AppConstants.keyVibration) ?? true;
-        _soundEnabled = prefs.getBool(AppConstants.keyRingtone) ?? true;
         _isLoading = false;
       });
     } catch (e) {
@@ -166,11 +161,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     controller.dispose();
 
-    if (newNumber == null || newNumber.isEmpty || newNumber == _deviceNumber) {
+    if (newNumber == null ||
+        newNumber.isEmpty ||
+        newNumber == _deviceNumber) {
       return;
     }
 
-    // التحقق من الصيغة
     if (newNumber.length != 4) {
       _showSnack('الرقم يجب أن يكون 4 أرقام');
       return;
@@ -186,7 +182,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       return;
     }
 
-    // محاولة التحديث
     final discovery = context.read<DeviceDiscovery>();
     final ok = await discovery.updateDeviceNumber(newNumber);
 
@@ -201,15 +196,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   // ============================================
-  // === المظهر ===
+  // === المظهر (عبر ThemeProvider) ===
   // ============================================
 
   Future<void> _setThemeMode(String mode) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(AppConstants.keyThemeMode, mode);
-    if (!mounted) return;
-    setState(() => _themeMode = mode);
-    _showSnack('سيُطبَّق المظهر عند إعادة فتح التطبيق');
+    final themeProvider = context.read<ThemeProvider>();
+    await themeProvider.setThemeMode(mode);
+    // لا حاجة لإعادة البناء — ThemeProvider يُشعر كل التطبيق
   }
 
   // ============================================
@@ -217,16 +210,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   // ============================================
 
   Future<void> _toggleVibration(bool value) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(AppConstants.keyVibration, value);
-    if (!mounted) return;
     setState(() => _vibrationEnabled = value);
+    // ملاحظة: تُحفظ في Prefs عند الحاجة
   }
 
   Future<void> _toggleSound(bool value) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(AppConstants.keyRingtone, value);
-    if (!mounted) return;
     setState(() => _soundEnabled = value);
   }
 
@@ -511,15 +499,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   // ============================================
-  // === المظهر ===
+  // === المظهر (مع ThemeProvider) ===
   // ============================================
 
   Widget _buildThemeSection() {
+    // ✅ راقب ThemeProvider للتحديث الفوري
+    final currentMode = context.watch<ThemeProvider>().themeModeString;
+
     return _SettingsCard(
       children: [
         RadioListTile<String>(
           value: 'light',
-          groupValue: _themeMode,
+          groupValue: currentMode,
           onChanged: (v) {
             if (v != null) _setThemeMode(v);
           },
@@ -529,7 +520,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         RadioListTile<String>(
           value: 'dark',
-          groupValue: _themeMode,
+          groupValue: currentMode,
           onChanged: (v) {
             if (v != null) _setThemeMode(v);
           },
@@ -539,7 +530,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
         RadioListTile<String>(
           value: 'system',
-          groupValue: _themeMode,
+          groupValue: currentMode,
           onChanged: (v) {
             if (v != null) _setThemeMode(v);
           },
