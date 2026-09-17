@@ -6,7 +6,6 @@ import '../../core/constants.dart';
 
 /// ============================================================
 /// مدير قاعدة البيانات المحلية (SQLite)
-/// نمط Singleton لضمان نسخة واحدة فقط في التطبيق
 /// ============================================================
 class DatabaseHelper {
   DatabaseHelper._internal();
@@ -23,9 +22,6 @@ class DatabaseHelper {
     return _db!;
   }
 
-  // ============================================
-  // === أسماء الجداول ===
-  // ============================================
   static const String tableDevices = 'devices';
   static const String tableConversations = 'conversations';
   static const String tableMessages = 'messages';
@@ -50,17 +46,17 @@ class DatabaseHelper {
   }
 
   Future<void> _onConfigure(Database db) async {
-    // تفعيل مفاتيح الربط الأجنبي
     await db.execute('PRAGMA foreign_keys = ON');
   }
 
   Future<void> _onCreate(Database db, int version) async {
-    // ============================================
-    // جدول الأجهزة (Devices)
-    // ============================================
+    // --------------------------------------------
+    // جدول الأجهزة (مع عمود number الجديد)
+    // --------------------------------------------
     await db.execute('''
       CREATE TABLE $tableDevices (
         device_id     TEXT PRIMARY KEY,
+        number        TEXT NOT NULL DEFAULT '',
         name          TEXT NOT NULL,
         ip_address    TEXT NOT NULL,
         port          INTEGER NOT NULL,
@@ -73,9 +69,6 @@ class DatabaseHelper {
       )
     ''');
 
-    // ============================================
-    // جدول المحادثات (Conversations)
-    // ============================================
     await db.execute('''
       CREATE TABLE $tableConversations (
         conversation_id     TEXT PRIMARY KEY,
@@ -92,9 +85,6 @@ class DatabaseHelper {
       )
     ''');
 
-    // ============================================
-    // جدول الرسائل (Messages)
-    // ============================================
     await db.execute('''
       CREATE TABLE $tableMessages (
         message_id       TEXT PRIMARY KEY,
@@ -119,9 +109,6 @@ class DatabaseHelper {
       )
     ''');
 
-    // ============================================
-    // جدول سجل المكالمات (Call Logs)
-    // ============================================
     await db.execute('''
       CREATE TABLE $tableCallLogs (
         call_id          TEXT PRIMARY KEY,
@@ -136,9 +123,7 @@ class DatabaseHelper {
       )
     ''');
 
-    // ============================================
-    // الفهارس (Indexes) — لتسريع الاستعلامات
-    // ============================================
+    // الفهارس
     await db.execute(
       'CREATE INDEX idx_messages_conversation ON $tableMessages(conversation_id)',
     );
@@ -154,24 +139,39 @@ class DatabaseHelper {
     await db.execute(
       'CREATE INDEX idx_devices_last_seen ON $tableDevices(last_seen)',
     );
+    await db.execute(
+      'CREATE INDEX idx_devices_number ON $tableDevices(number)',
+    );
   }
 
-  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
-    // سنستخدمها لاحقًا عند ترقية الإصدار
-    // مثال: if (oldVersion < 2) { ... }
+  // ============================================
+  // === الترقية (من الإصدار 1 إلى 2) ===
+  // ============================================
+  Future<void> _onUpgrade(
+    Database db,
+    int oldVersion,
+    int newVersion,
+  ) async {
+    if (oldVersion < 2) {
+      // إضافة عمود number لجدول الأجهزة
+      await db.execute(
+        "ALTER TABLE $tableDevices ADD COLUMN number TEXT NOT NULL DEFAULT ''",
+      );
+      // فهرس للبحث السريع
+      await db.execute(
+        'CREATE INDEX idx_devices_number ON $tableDevices(number)',
+      );
+    }
   }
 
   // ============================================
   // === عمليات عامة ===
   // ============================================
-
-  /// إغلاق قاعدة البيانات
   Future<void> close() async {
     await _db?.close();
     _db = null;
   }
 
-  /// حذف كل شيء (لأغراض التطوير)
   Future<void> wipeAll() async {
     await db.delete(tableMessages);
     await db.delete(tableConversations);
@@ -180,9 +180,8 @@ class DatabaseHelper {
   }
 
   // ============================================
-  // === CRUD: الأجهزة (Devices) ===
+  // === CRUD: الأجهزة ===
   // ============================================
-
   Future<int> upsertDevice(Map<String, dynamic> device) async {
     return db.insert(
       tableDevices,
@@ -205,6 +204,41 @@ class DatabaseHelper {
     return rows.isEmpty ? null : rows.first;
   }
 
+  /// بحث سريع بالرقم
+  Future<Map<String, dynamic>?> getDeviceByNumber(String number) async {
+    final rows = await db.query(
+      tableDevices,
+      where: 'number = ?',
+      whereArgs: [number],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  /// هل الرقم مستخدم من قبل جهاز آخر؟
+  Future<bool> isNumberUsedByOther(
+    String number,
+    String excludeDeviceId,
+  ) async {
+    final rows = await db.query(
+      tableDevices,
+      where: 'number = ? AND device_id != ?',
+      whereArgs: [number, excludeDeviceId],
+      limit: 1,
+    );
+    return rows.isNotEmpty;
+  }
+
+  /// كل الأرقام المستخدمة حاليًا
+  Future<Set<String>> getAllUsedNumbers() async {
+    final rows = await db.query(
+      tableDevices,
+      columns: ['number'],
+      where: "number != ''",
+    );
+    return rows.map((r) => r['number'] as String).toSet();
+  }
+
   Future<int> deleteDevice(String deviceId) async {
     return db.delete(
       tableDevices,
@@ -223,9 +257,8 @@ class DatabaseHelper {
   }
 
   // ============================================
-  // === CRUD: المحادثات (Conversations) ===
+  // === CRUD: المحادثات ===
   // ============================================
-
   Future<int> upsertConversation(Map<String, dynamic> conversation) async {
     return db.insert(
       tableConversations,
@@ -305,9 +338,8 @@ class DatabaseHelper {
   }
 
   // ============================================
-  // === CRUD: الرسائل (Messages) ===
+  // === CRUD: الرسائل ===
   // ============================================
-
   Future<int> insertMessage(Map<String, dynamic> message) async {
     return db.insert(
       tableMessages,
@@ -385,9 +417,8 @@ class DatabaseHelper {
   }
 
   // ============================================
-  // === CRUD: سجل المكالمات (Call Logs) ===
+  // === CRUD: سجل المكالمات ===
   // ============================================
-
   Future<int> insertCallLog(Map<String, dynamic> callLog) async {
     return db.insert(
       tableCallLogs,
