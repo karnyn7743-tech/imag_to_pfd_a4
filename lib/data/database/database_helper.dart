@@ -87,7 +87,7 @@ class DatabaseHelper {
       )
     ''');
 
-    // جدول الرسائل
+    // جدول الرسائل (مع is_pinned)
     await db.execute('''
       CREATE TABLE $tableMessages (
         message_id       TEXT PRIMARY KEY,
@@ -103,6 +103,7 @@ class DatabaseHelper {
         duration_ms      INTEGER,
         status           TEXT NOT NULL DEFAULT 'pending',
         is_outgoing      INTEGER NOT NULL DEFAULT 0,
+        is_pinned        INTEGER NOT NULL DEFAULT 0,
         reply_to_id      TEXT,
         created_at       INTEGER NOT NULL,
         delivered_at     INTEGER,
@@ -135,6 +136,9 @@ class DatabaseHelper {
       'CREATE INDEX idx_messages_created ON $tableMessages(created_at)',
     );
     await db.execute(
+      'CREATE INDEX idx_messages_pinned ON $tableMessages(is_pinned)',
+    );
+    await db.execute(
       'CREATE INDEX idx_conversations_peer ON $tableConversations(peer_device_id)',
     );
     await db.execute(
@@ -153,12 +157,23 @@ class DatabaseHelper {
     int oldVersion,
     int newVersion,
   ) async {
+    // v1 → v2: إضافة رقم الاتصال
     if (oldVersion < 2) {
       await db.execute(
         "ALTER TABLE $tableDevices ADD COLUMN number TEXT NOT NULL DEFAULT ''",
       );
       await db.execute(
         'CREATE INDEX idx_devices_number ON $tableDevices(number)',
+      );
+    }
+
+    // v2 → v3: إضافة تثبيت الرسائل
+    if (oldVersion < 3) {
+      await db.execute(
+        'ALTER TABLE $tableMessages ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0',
+      );
+      await db.execute(
+        'CREATE INDEX idx_messages_pinned ON $tableMessages(is_pinned)',
       );
     }
   }
@@ -407,7 +422,6 @@ class DatabaseHelper {
   // === حظر الأجهزة ===
   // ============================================
 
-  /// تفعيل/إلغاء الحظر
   Future<int> toggleBlock(String deviceId, bool isBlocked) async {
     return db.update(
       tableDevices,
@@ -417,7 +431,6 @@ class DatabaseHelper {
     );
   }
 
-  /// هل هذا الجهاز محظور؟
   Future<bool> isDeviceBlocked(String deviceId) async {
     final result = await db.query(
       tableDevices,
@@ -430,7 +443,6 @@ class DatabaseHelper {
     return (result.first['is_blocked'] as int?) == 1;
   }
 
-  /// كل الأجهزة المحظورة
   Future<List<Map<String, dynamic>>> getBlockedDevices() async {
     return db.query(
       tableDevices,
@@ -439,7 +451,6 @@ class DatabaseHelper {
     );
   }
 
-  /// عدد الأجهزة المحظورة
   Future<int> getBlockedCount() async {
     final result = await db.rawQuery(
       'SELECT COUNT(*) as count FROM $tableDevices '
@@ -448,7 +459,6 @@ class DatabaseHelper {
     return (result.first['count'] as int?) ?? 0;
   }
 
-  /// كل معرّفات الأجهزة المحظورة (للفحص السريع)
   Future<Set<String>> getBlockedDeviceIds() async {
     final rows = await db.query(
       tableDevices,
@@ -538,6 +548,65 @@ class DatabaseHelper {
   }
 
   // ============================================
+  // === تثبيت الرسائل (جديد) ===
+  // ============================================
+
+  /// تفعيل/إلغاء تثبيت رسالة
+  Future<int> toggleMessagePin(String messageId, bool isPinned) async {
+    return db.update(
+      tableMessages,
+      {'is_pinned': isPinned ? 1 : 0},
+      where: 'message_id = ?',
+      whereArgs: [messageId],
+    );
+  }
+
+  /// هل الرسالة مثبتة؟
+  Future<bool> isMessagePinned(String messageId) async {
+    final result = await db.query(
+      tableMessages,
+      columns: ['is_pinned'],
+      where: 'message_id = ?',
+      whereArgs: [messageId],
+      limit: 1,
+    );
+    if (result.isEmpty) return false;
+    return (result.first['is_pinned'] as int?) == 1;
+  }
+
+  /// كل الرسائل المثبتة في محادثة (الأحدث أولًا)
+  Future<List<Map<String, dynamic>>> getPinnedMessages(
+    String conversationId,
+  ) async {
+    return db.query(
+      tableMessages,
+      where: 'conversation_id = ? AND is_pinned = 1',
+      whereArgs: [conversationId],
+      orderBy: 'created_at DESC',
+    );
+  }
+
+  /// عدد الرسائل المثبتة في محادثة
+  Future<int> getPinnedMessagesCount(String conversationId) async {
+    final result = await db.rawQuery(
+      'SELECT COUNT(*) as count FROM $tableMessages '
+      'WHERE conversation_id = ? AND is_pinned = 1',
+      [conversationId],
+    );
+    return (result.first['count'] as int?) ?? 0;
+  }
+
+  /// إلغاء تثبيت كل الرسائل في محادثة
+  Future<int> unpinAllMessages(String conversationId) async {
+    return db.update(
+      tableMessages,
+      {'is_pinned': 0},
+      where: 'conversation_id = ? AND is_pinned = 1',
+      whereArgs: [conversationId],
+    );
+  }
+
+  // ============================================
   // === CRUD: سجل المكالمات ===
   // ============================================
   Future<int> insertCallLog(Map<String, dynamic> callLog) async {
@@ -583,10 +652,9 @@ class DatabaseHelper {
   }
 
   // ============================================
-  // === إحصائيات جهاز معين (جديد) ===
+  // === إحصائيات جهاز معين ===
   // ============================================
 
-  /// عدد الرسائل في محادثة معينة
   Future<int> getMessageCountForPeer(String peerDeviceId) async {
     final conv = await getConversationByPeer(peerDeviceId);
     if (conv == null) return 0;
@@ -602,7 +670,6 @@ class DatabaseHelper {
     return (result.first['count'] as int?) ?? 0;
   }
 
-  /// عدد المكالمات مع جهاز معين
   Future<int> getCallCountForPeer(String peerDeviceId) async {
     final result = await db.rawQuery(
       'SELECT COUNT(*) as count FROM $tableCallLogs '
@@ -613,14 +680,12 @@ class DatabaseHelper {
     return (result.first['count'] as int?) ?? 0;
   }
 
-  /// تاريخ أول ظهور للجهاز
   Future<int?> getFirstSeenForDevice(String deviceId) async {
     final device = await getDevice(deviceId);
     if (device == null) return null;
     return device['created_at'] as int?;
   }
 
-  /// تفعيل/إلغاء المفضلة
   Future<int> toggleFavorite(String deviceId, bool isFavorite) async {
     return db.update(
       tableDevices,
@@ -630,7 +695,6 @@ class DatabaseHelper {
     );
   }
 
-  /// هل هذا الجهاز في المفضلة؟
   Future<bool> isFavorite(String deviceId) async {
     final result = await db.query(
       tableDevices,
@@ -643,7 +707,6 @@ class DatabaseHelper {
     return (result.first['is_favorite'] as int?) == 1;
   }
 
-  /// تعديل اسم جهاز (من شاشة المعلومات)
   Future<int> updateDeviceName(String deviceId, String newName) async {
     return db.update(
       tableDevices,
@@ -657,7 +720,6 @@ class DatabaseHelper {
   // === البحث العالمي ===
   // ============================================
 
-  /// بحث في كل الرسائل عبر كل المحادثات
   Future<List<Map<String, dynamic>>> searchMessages({
     required String query,
     int limit = 200,
@@ -686,7 +748,6 @@ class DatabaseHelper {
     ''', [q, q, limit]);
   }
 
-  /// إحصائيات سريعة عن النتائج
   Future<Map<String, int>> getSearchStats(String query) async {
     if (query.trim().isEmpty) {
       return {'total': 0, 'conversations': 0};
