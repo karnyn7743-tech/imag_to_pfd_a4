@@ -13,7 +13,7 @@
 
 # permission_handler
 -keep class com.baseflow.permissionhandler.** { *; }
-
+-keep class com.hiennv.flutter_callkit_incoming.** { *; }
 # flutter_local_notifications
 -keep class com.dexterous.** { *; }
 
