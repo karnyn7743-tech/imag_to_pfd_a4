@@ -21,6 +21,7 @@ import '../theme/app_theme.dart';
 import '../widgets/permission_dialog.dart';
 import '../widgets/voice_message_bubble.dart';
 import 'audio_call_screen.dart';
+import 'forward_message_screen.dart';
 import 'video_call_screen.dart';
 import 'video_player_screen.dart';
 
@@ -29,8 +30,6 @@ import 'video_player_screen.dart';
 /// ============================================================
 class ChatScreen extends StatefulWidget {
   final DiscoveredDevice peer;
-
-  /// معرّف رسالة لفتحها مباشرة والتمرير إليها (من إشعار أو بحث)
   final String? highlightMessageId;
 
   const ChatScreen({
@@ -51,12 +50,11 @@ class _ChatScreenState extends State<ChatScreen> {
   final ScrollController _scrollController = ScrollController();
   final FocusNode _inputFocus = FocusNode();
 
-  // للبحث
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocus = FocusNode();
 
   MessageService? _messageService;
-  AppLifecycleService? _lifecycleService; // ✅ جديد
+  AppLifecycleService? _lifecycleService;
   StreamSubscription<MessageEvent>? _eventSub;
 
   // ============================================
@@ -70,17 +68,14 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _canSend = false;
   bool _isSendingMedia = false;
 
-  // حالة البحث
   bool _isSearching = false;
   String _searchQuery = '';
 
-  // حالة التسجيل
   bool _isRecording = false;
   int _recordingSeconds = 0;
   Timer? _recordingTimer;
   final List<double> _waveform = [];
 
-  // معرّف الرسالة المُبرزة
   String? _highlightedMessageId;
 
   late String _conversationId;
@@ -102,7 +97,6 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     });
 
-    // مستمع البحث
     _searchController.addListener(() {
       final q = _searchController.text.trim();
       if (q != _searchQuery) {
@@ -116,7 +110,6 @@ class _ChatScreenState extends State<ChatScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       _messageService = context.read<MessageService>();
       _lifecycleService = context.read<AppLifecycleService>();
-
       final discovery = context.read<DeviceDiscovery>();
       _conversationId = _buildConversationId(
         discovery.deviceId,
@@ -124,15 +117,11 @@ class _ChatScreenState extends State<ChatScreen> {
       );
 
       _eventSub = _messageService!.events.listen(_onMessageEvent);
-
-      // ✅ أعلم خدمة دورة الحياة أن المحادثة مفتوحة
-      // (لمنع إظهار إشعارات لهذه المحادثة أثناء عرضها)
       _lifecycleService!.setOpenChat(widget.peer.deviceId);
 
       await _loadMessages();
       await _messageService!.markConversationAsRead(widget.peer.deviceId);
 
-      // إذا كانت هناك رسالة مُبرزة، مرّر إليها
       if (_highlightedMessageId != null) {
         _scrollToMessage(_highlightedMessageId!);
         Future.delayed(const Duration(seconds: 3), () {
@@ -144,9 +133,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
-    // ✅ نظّف حالة المحادثة المفتوحة
     _lifecycleService?.clearOpenChat();
-
     _eventSub?.cancel();
     _recordingTimer?.cancel();
     AudioRecorderService.instance.cancel();
@@ -185,13 +172,11 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  /// فلترة الرسائل حسب كلمة البحث
   void _applyFilter() {
     if (_searchQuery.isEmpty) {
       _filteredMessages = _messages;
       return;
     }
-
     final q = _searchQuery.toLowerCase();
     _filteredMessages = _messages.where((m) {
       final type = m['type'] as String?;
@@ -209,7 +194,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _onMessageEvent(MessageEvent event) {
     if (event.peerDeviceId != widget.peer.deviceId) return;
-
     switch (event.type) {
       case MessageEventType.received:
       case MessageEventType.sent:
@@ -240,7 +224,6 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
-  /// تمرير إلى رسالة محددة
   void _scrollToMessage(String messageId) {
     final items = _messages.reversed.toList();
     final index = items.indexWhere((m) => m['message_id'] == messageId);
@@ -284,6 +267,330 @@ class _ChatScreenState extends State<ChatScreen> {
       _searchController.clear();
       _filteredMessages = _messages;
     });
+  }
+
+  // ============================================
+  // === قائمة خيارات الرسالة (جديد) ===
+  // ============================================
+
+  void _showMessageOptions(Map<String, dynamic> message) {
+    HapticFeedback.mediumImpact();
+
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final type = message['type'] as String?;
+    final isOutgoing = (message['is_outgoing'] as int?) == 1;
+    final isText = type == AppConstants.mediaText;
+    final body = message['body'] as String? ?? '';
+    final hasText = body.isNotEmpty;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        decoration: BoxDecoration(
+          color: isDark ? AppTheme.darkSurface : Colors.white,
+          borderRadius: const BorderRadius.vertical(
+            top: Radius.circular(20),
+          ),
+        ),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // مؤشر السحب
+              Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 12),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade400,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+
+              // الرد
+              _OptionItem(
+                icon: Icons.reply,
+                label: 'رد',
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _startReply(message);
+                },
+              ),
+
+              // التوجيه
+              _OptionItem(
+                icon: Icons.forward,
+                label: 'توجيه',
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _forwardMessage(message);
+                },
+              ),
+
+              // نسخ (للنصوص فقط)
+              if (isText && hasText)
+                _OptionItem(
+                  icon: Icons.copy_outlined,
+                  label: 'نسخ النص',
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _copyMessage(body);
+                  },
+                ),
+
+              Divider(
+                height: 8,
+                color: isDark
+                    ? AppTheme.darkDivider
+                    : AppTheme.lightDivider,
+              ),
+
+              // حذف (فقط للرسائل الصادرة)
+              if (isOutgoing)
+                _OptionItem(
+                  icon: Icons.delete_outline,
+                  label: 'حذف',
+                  color: AppTheme.errorColor,
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _confirmDeleteMessage(message);
+                  },
+                )
+              else
+                _OptionItem(
+                  icon: Icons.info_outline,
+                  label: 'معلومات الرسالة',
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _showMessageInfo(message);
+                  },
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ============================================
+  // === توجيه الرسالة ===
+  // ============================================
+
+  Future<void> _forwardMessage(Map<String, dynamic> message) async {
+    final result = await Navigator.of(context).push<ForwardResult>(
+      MaterialPageRoute(
+        builder: (_) => ForwardMessageScreen(message: message),
+      ),
+    );
+
+    if (!mounted || result == null) return;
+
+    // عرض النتيجة
+    final String text;
+    final Color color;
+
+    if (result.allSucceeded) {
+      text = 'تم التوجيه إلى ${result.successCount} جهاز';
+      color = AppTheme.successColor;
+    } else if (result.partial) {
+      text = 'نجح ${result.successCount} وفشل ${result.failCount}';
+      color = AppTheme.warningColor;
+    } else {
+      text = 'فشل التوجيه';
+      color = AppTheme.errorColor;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(text),
+        backgroundColor: color,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  // ============================================
+  // === نسخ الرسالة ===
+  // ============================================
+
+  Future<void> _copyMessage(String text) async {
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!mounted) return;
+    HapticFeedback.lightImpact();
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('تم نسخ النص'),
+        duration: Duration(seconds: 2),
+      ),
+    );
+  }
+
+  // ============================================
+  // === حذف الرسالة ===
+  // ============================================
+
+  Future<void> _confirmDeleteMessage(Map<String, dynamic> message) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        icon: const Icon(
+          Icons.delete_forever,
+          size: 40,
+          color: AppTheme.errorColor,
+        ),
+        title: const Text('حذف الرسالة'),
+        content: const Text(
+          'سيتم حذف هذه الرسالة نهائيًا من جهازك.\n'
+          'لا يمكن التراجع عن هذه العملية.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: AppTheme.errorColor,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('حذف'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    try {
+      final messageId = message['message_id'] as String;
+      await DatabaseHelper.instance.deleteMessage(messageId);
+      HapticFeedback.mediumImpact();
+      await _loadMessages();
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('تم حذف الرسالة'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    } catch (e) {
+      debugPrint('[Chat] deleteMessage error: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('تعذّر حذف الرسالة'),
+          backgroundColor: AppTheme.errorColor,
+        ),
+      );
+    }
+  }
+
+  // ============================================
+  // === معلومات الرسالة ===
+  // ============================================
+
+  void _showMessageInfo(Map<String, dynamic> message) {
+    final sentAt = DateTime.fromMillisecondsSinceEpoch(
+      message['created_at'] as int,
+    );
+    final deliveredAt = message['delivered_at'] as int?;
+    final readAt = message['read_at'] as int?;
+    final status = message['status'] as String? ?? 'unknown';
+
+    String statusText;
+    switch (status) {
+      case 'pending':
+        statusText = 'قيد الإرسال';
+        break;
+      case 'sent':
+        statusText = 'تم الإرسال';
+        break;
+      case 'delivered':
+        statusText = 'تم التسليم';
+        break;
+      case 'read':
+        statusText = 'تم القراءة';
+        break;
+      case 'failed':
+        statusText = 'فشل';
+        break;
+      default:
+        statusText = status;
+    }
+
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('معلومات الرسالة'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _infoRow('الحالة', statusText),
+            const SizedBox(height: 8),
+            _infoRow(
+              'أُرسلت',
+              DateFormat('d/M/y - h:mm a', 'ar').format(sentAt),
+            ),
+            if (deliveredAt != null) ...[
+              const SizedBox(height: 8),
+              _infoRow(
+                'سُلّمت',
+                DateFormat('d/M/y - h:mm a', 'ar').format(
+                  DateTime.fromMillisecondsSinceEpoch(deliveredAt),
+                ),
+              ),
+            ],
+            if (readAt != null) ...[
+              const SizedBox(height: 8),
+              _infoRow(
+                'قُرِئت',
+                DateFormat('d/M/y - h:mm a', 'ar').format(
+                  DateTime.fromMillisecondsSinceEpoch(readAt),
+                ),
+              ),
+            ],
+          ],
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('حسنًا'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _infoRow(String label, String value) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 70,
+          child: Text(
+            '$label:',
+            style: TextStyle(
+              fontSize: 13,
+              color: Colors.grey.shade600,
+            ),
+          ),
+        ),
+        Expanded(
+          child: Text(
+            value,
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ],
+    );
   }
 
   // ============================================
@@ -365,9 +672,7 @@ class _ChatScreenState extends State<ChatScreen> {
       (_) {
         if (!mounted) return;
         setState(() => _recordingSeconds++);
-        if (_recordingSeconds >= 300) {
-          _stopAndSendRecording();
-        }
+        if (_recordingSeconds >= 300) _stopAndSendRecording();
       },
     );
 
@@ -431,14 +736,10 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _cancelRecording() async {
     if (!_isRecording) return;
-
     _recordingTimer?.cancel();
     _recordingTimer = null;
-
     await AudioRecorderService.instance.cancel();
-
     if (!mounted) return;
-
     setState(() {
       _isRecording = false;
       _recordingSeconds = 0;
@@ -482,7 +783,6 @@ class _ChatScreenState extends State<ChatScreen> {
         _showError('الملف غير موجود');
         return;
       }
-
       final result = await OpenFilex.open(filePath);
       if (result.type != ResultType.done && mounted) {
         _showError('لا يوجد تطبيق لفتح هذا الملف');
@@ -609,15 +909,10 @@ class _ChatScreenState extends State<ChatScreen> {
       message: 'نحتاج الميكروفون لإجراء المكالمات الصوتية',
       icon: Icons.mic,
     );
-
     if (!granted || !mounted) return;
-
     await Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => AudioCallScreen(
-          peer: widget.peer,
-          isCaller: true,
-        ),
+        builder: (_) => AudioCallScreen(peer: widget.peer, isCaller: true),
       ),
     );
   }
@@ -633,15 +928,10 @@ class _ChatScreenState extends State<ChatScreen> {
       message: 'نحتاجهما لإجراء مكالمات الفيديو',
       icon: Icons.videocam,
     );
-
     if (!granted || !mounted) return;
-
     await Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => VideoCallScreen(
-          peer: widget.peer,
-          isCaller: true,
-        ),
+        builder: (_) => VideoCallScreen(peer: widget.peer, isCaller: true),
       ),
     );
   }
@@ -679,10 +969,8 @@ class _ChatScreenState extends State<ChatScreen> {
                       : _buildMessagesList(isDark),
             ),
           ),
-
           if (_replyToMessage != null && !_isRecording)
             _buildReplyBar(isDark),
-
           if (!_isSearching) ...[
             if (_isRecording)
               _buildRecordingBar(isDark)
@@ -693,10 +981,6 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
     );
   }
-
-  // ============================================
-  // === AppBar العادي ===
-  // ============================================
 
   PreferredSizeWidget _buildNormalAppBar(bool isDark, bool peerOnline) {
     return AppBar(
@@ -741,9 +1025,7 @@ class _ChatScreenState extends State<ChatScreen> {
                             fontWeight: FontWeight.bold,
                             color: Colors.white,
                             letterSpacing: 0.5,
-                            fontFeatures: [
-                              FontFeature.tabularFigures(),
-                            ],
+                            fontFeatures: [FontFeature.tabularFigures()],
                           ),
                         ),
                       ),
@@ -789,19 +1071,11 @@ class _ChatScreenState extends State<ChatScreen> {
               value: 'clear',
               child: Text('مسح المحادثة'),
             ),
-            PopupMenuItem(
-              value: 'block',
-              child: Text('حظر'),
-            ),
           ],
         ),
       ],
     );
   }
-
-  // ============================================
-  // === AppBar البحث ===
-  // ============================================
 
   PreferredSizeWidget _buildSearchAppBar(bool isDark) {
     return AppBar(
@@ -814,10 +1088,7 @@ class _ChatScreenState extends State<ChatScreen> {
         controller: _searchController,
         focusNode: _searchFocus,
         autofocus: true,
-        style: const TextStyle(
-          color: Colors.white,
-          fontSize: 16,
-        ),
+        style: const TextStyle(color: Colors.white, fontSize: 16),
         cursorColor: Colors.white,
         decoration: InputDecoration(
           hintText: 'ابحث في الرسائل...',
@@ -850,17 +1121,11 @@ class _ChatScreenState extends State<ChatScreen> {
           IconButton(
             icon: const Icon(Icons.close),
             tooltip: 'مسح',
-            onPressed: () {
-              _searchController.clear();
-            },
+            onPressed: () => _searchController.clear(),
           ),
       ],
     );
   }
-
-  // ============================================
-  // === حالة "لا نتائج" ===
-  // ============================================
 
   Widget _buildNoResultsState(bool isDark) {
     final textColor =
@@ -872,11 +1137,7 @@ class _ChatScreenState extends State<ChatScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(
-              Icons.search_off,
-              size: 72,
-              color: textColor,
-            ),
+            Icon(Icons.search_off, size: 72, color: textColor),
             const SizedBox(height: 16),
             Text(
               'لا توجد نتائج',
@@ -899,10 +1160,6 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
     );
   }
-
-  // ============================================
-  // === شريط التسجيل ===
-  // ============================================
 
   Widget _buildRecordingBar(bool isDark) {
     return SafeArea(
@@ -974,10 +1231,6 @@ class _ChatScreenState extends State<ChatScreen> {
     return '$m:${s.toString().padLeft(2, '0')}';
   }
 
-  // ============================================
-  // === شريط الإدخال ===
-  // ============================================
-
   Widget _buildInputBar(bool isDark, bool peerOnline) {
     return SafeArea(
       top: false,
@@ -1006,7 +1259,6 @@ class _ChatScreenState extends State<ChatScreen> {
               onPressed:
                   (peerOnline && !_isSendingMedia) ? _showAttachMenu : null,
             ),
-
             Expanded(
               child: Container(
                 constraints: const BoxConstraints(maxHeight: 120),
@@ -1024,7 +1276,8 @@ class _ChatScreenState extends State<ChatScreen> {
                   textInputAction: TextInputAction.newline,
                   keyboardType: TextInputType.multiline,
                   decoration: InputDecoration(
-                    hintText: peerOnline ? 'اكتب رسالة...' : 'الجهاز غير متصل',
+                    hintText:
+                        peerOnline ? 'اكتب رسالة...' : 'الجهاز غير متصل',
                     hintStyle: TextStyle(
                       color: isDark
                           ? AppTheme.darkTextSecondary
@@ -1048,9 +1301,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 ),
               ),
             ),
-
             const SizedBox(width: 6),
-
             if (_canSend && peerOnline)
               Material(
                 color: AppTheme.primaryColor,
@@ -1086,10 +1337,6 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  // ============================================
-  // === قائمة الرسائل ===
-  // ============================================
-
   Widget _buildMessagesList(bool isDark) {
     final items = _filteredMessages.reversed.toList();
 
@@ -1120,6 +1367,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 isDark: isDark,
                 searchQuery: _searchQuery,
                 onReply: () => _startReply(msg),
+                onLongPress: () => _showMessageOptions(msg),
                 onOpenImage: _openImage,
                 onOpenVideo: _openVideo,
                 onOpenFile: _openFile,
@@ -1131,10 +1379,6 @@ class _ChatScreenState extends State<ChatScreen> {
       },
     );
   }
-
-  // ============================================
-  // === باقي الواجهة ===
-  // ============================================
 
   Widget _buildEmptyState(bool isDark) {
     return Center(
@@ -1185,9 +1429,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final t2 = prev['created_at'] as int;
     final d1 = DateTime.fromMillisecondsSinceEpoch(t1);
     final d2 = DateTime.fromMillisecondsSinceEpoch(t2);
-    return d1.day != d2.day ||
-        d1.month != d2.month ||
-        d1.year != d2.year;
+    return d1.day != d2.day || d1.month != d2.month || d1.year != d2.year;
   }
 
   Widget _buildDateDivider(int timestamp, bool isDark) {
@@ -1360,10 +1602,6 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  // ============================================
-  // === تنسيقات ===
-  // ============================================
-
   String _previewText(Map<String, dynamic> msg) {
     final type = msg['type'] as String?;
     switch (type) {
@@ -1404,8 +1642,44 @@ class _ChatScreenState extends State<ChatScreen> {
 }
 
 // ============================================================
-// === نقطة نابضة ===
+// === عناصر مساعدة ===
 // ============================================================
+
+class _OptionItem extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final Color? color;
+  final VoidCallback onTap;
+
+  const _OptionItem({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final effectiveColor = color ??
+        (Theme.of(context).brightness == Brightness.dark
+            ? AppTheme.darkTextPrimary
+            : AppTheme.lightTextPrimary);
+
+    return ListTile(
+      leading: Icon(icon, color: effectiveColor),
+      title: Text(
+        label,
+        style: TextStyle(
+          color: effectiveColor,
+          fontSize: 15,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+      onTap: onTap,
+    );
+  }
+}
+
 class _PulsingDot extends StatefulWidget {
   final Color color;
 
@@ -1450,17 +1724,11 @@ class _PulsingDotState extends State<_PulsingDot>
   }
 }
 
-// ============================================================
-// === موجة صوتية ===
-// ============================================================
 class _WaveformBars extends StatelessWidget {
   final List<double> values;
   final Color color;
 
-  const _WaveformBars({
-    required this.values,
-    required this.color,
-  });
+  const _WaveformBars({required this.values, required this.color});
 
   @override
   Widget build(BuildContext context) {
@@ -1474,7 +1742,6 @@ class _WaveformBars extends StatelessWidget {
         ),
       );
     }
-
     return SizedBox(
       height: 28,
       child: Row(
@@ -1496,9 +1763,6 @@ class _WaveformBars extends StatelessWidget {
   }
 }
 
-// ============================================================
-// === الأفاتار ===
-// ============================================================
 class _Avatar extends StatelessWidget {
   final String name;
   final bool online;
@@ -1544,14 +1808,12 @@ class _Avatar extends StatelessWidget {
   }
 }
 
-// ============================================================
-// === فقاعة الرسالة ===
-// ============================================================
 class _MessageBubble extends StatelessWidget {
   final Map<String, dynamic> message;
   final bool isDark;
   final String searchQuery;
   final VoidCallback onReply;
+  final VoidCallback onLongPress;
   final void Function(String) onOpenImage;
   final void Function(String, {String? title}) onOpenVideo;
   final Future<void> Function(String) onOpenFile;
@@ -1562,6 +1824,7 @@ class _MessageBubble extends StatelessWidget {
     required this.isDark,
     required this.searchQuery,
     required this.onReply,
+    required this.onLongPress,
     required this.onOpenImage,
     required this.onOpenVideo,
     required this.onOpenFile,
@@ -1581,7 +1844,8 @@ class _MessageBubble extends StatelessWidget {
             ? AlignmentDirectional.centerEnd
             : AlignmentDirectional.centerStart,
         child: GestureDetector(
-          onLongPress: onReply,
+          onLongPress: onLongPress,
+          onDoubleTap: onReply,
           child: Container(
             constraints: BoxConstraints(
               maxWidth: isAudio
@@ -1614,7 +1878,6 @@ class _MessageBubble extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 _buildContent(context, isDark),
-
                 if (transfers.containsKey(messageId))
                   Padding(
                     padding: const EdgeInsets.symmetric(
@@ -1633,7 +1896,6 @@ class _MessageBubble extends StatelessWidget {
                       ),
                     ),
                   ),
-
                 Padding(
                   padding: const EdgeInsets.only(
                     left: 10,
@@ -1681,10 +1943,8 @@ class _MessageBubble extends StatelessWidget {
     switch (type) {
       case AppConstants.mediaImage:
         return _buildImagePreview(filePath);
-
       case AppConstants.mediaVideo:
         return _buildVideoPreview(filePath);
-
       case AppConstants.mediaAudio:
         if (filePath == null || !File(filePath).existsSync()) {
           return _buildPlaceholderPreview(
@@ -1699,35 +1959,25 @@ class _MessageBubble extends StatelessWidget {
           isOutgoing: isOutgoing,
           isDark: isDark,
         );
-
       case AppConstants.mediaFile:
         final fileName = message['file_name'] as String? ?? 'ملف';
         return _buildFilePreview(filePath, fileName);
-
       case AppConstants.mediaText:
       default:
         final body = message['body'] as String? ?? '';
         return Padding(
-          padding: const EdgeInsets.symmetric(
-            horizontal: 12,
-            vertical: 8,
-          ),
-          child: _buildHighlightedText(
-            body,
-            isDark: isDark,
-          ),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: _buildHighlightedText(body, isDark: isDark),
         );
     }
   }
 
-  /// نص مع إبراز كلمة البحث
   Widget _buildHighlightedText(String text, {required bool isDark}) {
     final baseStyle = TextStyle(
       fontSize: 15,
       height: 1.35,
-      color: isDark
-          ? AppTheme.darkTextPrimary
-          : AppTheme.lightTextPrimary,
+      color:
+          isDark ? AppTheme.darkTextPrimary : AppTheme.lightTextPrimary,
     );
 
     if (searchQuery.isEmpty) {
@@ -1747,30 +1997,22 @@ class _MessageBubble extends StatelessWidget {
         }
         break;
       }
-
       if (index > start) {
         spans.add(TextSpan(text: text.substring(start, index)));
       }
-
-      spans.add(
-        TextSpan(
-          text: text.substring(index, index + searchQuery.length),
-          style: TextStyle(
-            backgroundColor: Colors.yellow.withOpacity(0.6),
-            color: Colors.black,
-            fontWeight: FontWeight.bold,
-          ),
+      spans.add(TextSpan(
+        text: text.substring(index, index + searchQuery.length),
+        style: TextStyle(
+          backgroundColor: Colors.yellow.withOpacity(0.6),
+          color: Colors.black,
+          fontWeight: FontWeight.bold,
         ),
-      );
-
+      ));
       start = index + searchQuery.length;
     }
 
     return RichText(
-      text: TextSpan(
-        style: baseStyle,
-        children: spans,
-      ),
+      text: TextSpan(style: baseStyle, children: spans),
     );
   }
 
@@ -1782,7 +2024,6 @@ class _MessageBubble extends StatelessWidget {
         color: Colors.grey,
       );
     }
-
     return GestureDetector(
       onTap: () => onOpenImage(filePath),
       child: Hero(
@@ -1813,7 +2054,6 @@ class _MessageBubble extends StatelessWidget {
 
   Widget _buildVideoPreview(String? filePath) {
     final exists = filePath != null && File(filePath).existsSync();
-
     return GestureDetector(
       onTap: exists ? () => onOpenVideo(filePath) : null,
       child: Container(
@@ -2032,9 +2272,6 @@ class _MessageBubble extends StatelessWidget {
   }
 }
 
-// ============================================================
-// === عارض الصورة بملء الشاشة ===
-// ============================================================
 class _ImageViewerScreen extends StatelessWidget {
   final String filePath;
 
