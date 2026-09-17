@@ -199,7 +199,6 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _pickAndSendMedia(String mediaType) async {
     if (_isSendingMedia) return;
 
-    // اطلب الأذونات المناسبة
     final permissions = mediaType == AppConstants.mediaImage
         ? <ph.Permission>[ph.Permission.photos]
         : mediaType == AppConstants.mediaVideo
@@ -303,7 +302,6 @@ class _ChatScreenState extends State<ChatScreen> {
   // ============================================
 
   Future<void> _startAudioCall() async {
-    // اطلب إذن الميكروفون
     final granted = await PermissionDialog.ensure(
       context,
       permissions: <ph.Permission>[ph.Permission.microphone],
@@ -325,7 +323,6 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _startVideoCall() async {
-    // اطلب إذني الميكروفون والكاميرا
     final granted = await PermissionDialog.ensure(
       context,
       permissions: <ph.Permission>[
@@ -372,13 +369,48 @@ class _ChatScreenState extends State<ChatScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
-                    widget.peer.name,
-                    style: const TextStyle(
-                      fontSize: 17,
-                      fontWeight: FontWeight.w600,
-                    ),
-                    overflow: TextOverflow.ellipsis,
+                  // ============================================
+                  // === الاسم + رقم الاتصال ===
+                  // ============================================
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Flexible(
+                        child: Text(
+                          widget.peer.name,
+                          style: const TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      if (widget.peer.hasValidNumber) ...[
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            '#${widget.peer.number}',
+                            style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                              letterSpacing: 0.5,
+                              fontFeatures: [
+                                FontFeature.tabularFigures(),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                   const SizedBox(height: 2),
                   Text(
@@ -426,9 +458,6 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
       body: Column(
         children: [
-          // ============================================
-          // === قائمة الرسائل ===
-          // ============================================
           Expanded(
             child: Container(
               decoration: BoxDecoration(
@@ -444,14 +473,8 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ),
 
-          // ============================================
-          // === شريط الرد ===
-          // ============================================
           if (_replyToMessage != null) _buildReplyBar(isDark),
 
-          // ============================================
-          // === شريط الإدخال ===
-          // ============================================
           _buildInputBar(isDark, peerOnline),
         ],
       ),
@@ -649,7 +672,6 @@ class _ChatScreenState extends State<ChatScreen> {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            // زر المرفقات
             IconButton(
               icon: _isSendingMedia
                   ? const SizedBox(
@@ -663,7 +685,6 @@ class _ChatScreenState extends State<ChatScreen> {
                   (peerOnline && !_isSendingMedia) ? _showAttachMenu : null,
             ),
 
-            // حقل النص
             Expanded(
               child: Container(
                 constraints: const BoxConstraints(maxHeight: 120),
@@ -708,7 +729,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
             const SizedBox(width: 6),
 
-            // زر الإرسال
             Material(
               color: _canSend
                   ? AppTheme.primaryColor
@@ -960,14 +980,8 @@ class _MessageBubble extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // ============================================
-                // === محتوى الرسالة حسب النوع ===
-                // ============================================
                 _buildContent(context, isDark),
 
-                // ============================================
-                // === شريط التقدم ===
-                // ============================================
                 if (transfers.containsKey(messageId))
                   Padding(
                     padding: const EdgeInsets.symmetric(
@@ -987,9 +1001,6 @@ class _MessageBubble extends StatelessWidget {
                     ),
                   ),
 
-                // ============================================
-                // === الوقت والحالة ===
-                // ============================================
                 Padding(
                   padding: const EdgeInsets.only(
                     left: 10,
@@ -1076,9 +1087,6 @@ class _MessageBubble extends StatelessWidget {
     }
   }
 
-  // ============================================
-  // === معاينة الصورة ===
-  // ============================================
   Widget _buildImagePreview() {
     final filePath = message['file_path'] as String?;
 
@@ -1112,9 +1120,6 @@ class _MessageBubble extends StatelessWidget {
     );
   }
 
-  // ============================================
-  // === معاينة فيديو/صوت (مؤقتة) ===
-  // ============================================
   Widget _buildPlaceholderPreview({
     required IconData icon,
     required String label,
@@ -1146,9 +1151,6 @@ class _MessageBubble extends StatelessWidget {
     );
   }
 
-  // ============================================
-  // === معاينة ملف ===
-  // ============================================
   Widget _buildFilePreview(String fileName) {
     final ext = fileName.contains('.')
         ? fileName.split('.').last.toUpperCase()
@@ -1207,9 +1209,6 @@ class _MessageBubble extends StatelessWidget {
     );
   }
 
-  // ============================================
-  // === أيقونة الحالة ===
-  // ============================================
   Widget _statusIcon(String? status) {
     switch (status) {
       case 'pending':
