@@ -5,6 +5,7 @@ import '../../core/constants.dart';
 import '../../core/discovery/device_discovery.dart';
 import '../../core/services/permission_service.dart';
 import '../theme/app_theme.dart';
+import 'dialer_screen.dart';
 import 'settings_screen.dart';
 import 'tabs/conversations_tab.dart';
 import 'tabs/devices_tab.dart';
@@ -12,7 +13,6 @@ import 'tabs/calls_tab.dart';
 
 /// ============================================================
 /// الشاشة الرئيسية
-/// 3 تبويبات: المحادثات، المكالمات، الأجهزة
 /// ============================================================
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -23,23 +23,14 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen>
     with SingleTickerProviderStateMixin {
-  // ============================================
-  // === الحالة ===
-  // ============================================
   late TabController _tabController;
   bool _permissionsChecked = false;
-
-  // ============================================
-  // === دورة الحياة ===
-  // ============================================
 
   @override
   void initState() {
     super.initState();
-
     _tabController = TabController(length: 3, vsync: this);
 
-    // طلب أذونات الاكتشاف والإشعارات بعد ظهور الشاشة
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await _ensureDiscoveryPermissions();
     });
@@ -54,15 +45,12 @@ class _HomeScreenState extends State<HomeScreen>
   // ============================================
   // === الأذونات ===
   // ============================================
-
   Future<void> _ensureDiscoveryPermissions() async {
     if (_permissionsChecked) return;
     _permissionsChecked = true;
 
     final ok = await PermissionService.requestDiscovery();
-
     if (!ok && mounted) {
-      // المستخدم رفض — نُظهر تحذيرًا
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: const Text(
@@ -73,9 +61,7 @@ class _HomeScreenState extends State<HomeScreen>
           action: SnackBarAction(
             label: 'الإعدادات',
             textColor: Colors.white,
-            onPressed: () {
-              PermissionService.openAppSettings();
-            },
+            onPressed: () => PermissionService.openAppSettings(),
           ),
         ),
       );
@@ -88,9 +74,7 @@ class _HomeScreenState extends State<HomeScreen>
 
   void _openQrScanner() {
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('ماسح QR سيُضاف في إصدار لاحق'),
-      ),
+      const SnackBar(content: Text('ماسح QR سيُضاف في إصدار لاحق')),
     );
   }
 
@@ -100,12 +84,17 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
+  void _openDialer() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const DialerScreen()),
+    );
+  }
+
   // ============================================
   // === FAB ===
   // ============================================
 
   void _onFabPressed() {
-    // انتقل لتبويب الأجهزة لبدء محادثة جديدة
     _tabController.animateTo(2);
   }
 
@@ -117,10 +106,39 @@ class _HomeScreenState extends State<HomeScreen>
   Widget build(BuildContext context) {
     final discovery = context.watch<DeviceDiscovery>();
     final onlineCount = discovery.onlineDevices.length;
+    final myNumber = discovery.deviceNumber;
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text(AppConstants.appName),
+        // العنوان: اسم التطبيق + رقمي
+        title: Row(
+          children: [
+            const Text(AppConstants.appName),
+            if (myNumber.isNotEmpty) ...[
+              const SizedBox(width: 10),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 8,
+                  vertical: 3,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  myNumber,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                    letterSpacing: 1.0,
+                    fontFeatures: [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
         bottom: TabBar(
           controller: _tabController,
           indicatorColor: Colors.white,
@@ -136,29 +154,18 @@ class _HomeScreenState extends State<HomeScreen>
             fontWeight: FontWeight.w500,
           ),
           tabs: [
-            // ==========================================
-            // === تبويب المحادثات ===
-            // ==========================================
             const Tab(
               child: _TabContent(
                 icon: Icons.chat_bubble_outline,
                 label: 'المحادثات',
               ),
             ),
-
-            // ==========================================
-            // === تبويب المكالمات ===
-            // ==========================================
             const Tab(
               child: _TabContent(
                 icon: Icons.call_outlined,
                 label: 'المكالمات',
               ),
             ),
-
-            // ==========================================
-            // === تبويب الأجهزة (مع شارة العدد) ===
-            // ==========================================
             Tab(
               child: _TabContent(
                 icon: Icons.devices_outlined,
@@ -169,6 +176,12 @@ class _HomeScreenState extends State<HomeScreen>
           ],
         ),
         actions: [
+          // زر لوحة الاتصال
+          IconButton(
+            icon: const Icon(Icons.dialpad),
+            tooltip: 'الاتصال برقم',
+            onPressed: _openDialer,
+          ),
           IconButton(
             icon: const Icon(Icons.qr_code_scanner),
             tooltip: 'اقتران بـ QR',
@@ -192,7 +205,6 @@ class _HomeScreenState extends State<HomeScreen>
       floatingActionButton: AnimatedBuilder(
         animation: _tabController,
         builder: (context, _) {
-          // نُخفي الـ FAB في تبويب المكالمات
           final showFab = _tabController.index != 1;
           return AnimatedScale(
             scale: showFab ? 1.0 : 0.0,
@@ -212,7 +224,7 @@ class _HomeScreenState extends State<HomeScreen>
 }
 
 // ============================================================
-// === محتوى التبويب (أيقونة + نص + شارة اختيارية) ===
+// === محتوى التبويب ===
 // ============================================================
 class _TabContent extends StatelessWidget {
   final IconData icon;
