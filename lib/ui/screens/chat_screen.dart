@@ -67,6 +67,7 @@ class _ChatScreenState extends State<ChatScreen> {
   Map<String, dynamic>? _replyToMessage;
   bool _canSend = false;
   bool _isSendingMedia = false;
+  String? _multiSendProgress;
 
   bool _isSearching = false;
   String _searchQuery = '';
@@ -78,7 +79,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
   String? _highlightedMessageId;
 
-  // ✅ حالة التثبيت
   List<Map<String, dynamic>> _pinnedMessages = [];
   int _currentPinnedIndex = 0;
 
@@ -177,7 +177,6 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  /// تحميل الرسائل المثبتة
   Future<void> _loadPinnedMessages() async {
     try {
       final rows = await DatabaseHelper.instance.getPinnedMessages(
@@ -268,7 +267,6 @@ class _ChatScreenState extends State<ChatScreen> {
       );
     });
 
-    // ✅ إبراز مؤقت
     setState(() => _highlightedMessageId = messageId);
     Future.delayed(const Duration(seconds: 2), () {
       if (mounted) setState(() => _highlightedMessageId = null);
@@ -334,7 +332,6 @@ class _ChatScreenState extends State<ChatScreen> {
       final messageId = message['message_id'] as String;
       final isPinned = (message['is_pinned'] as int?) == 1;
 
-      // إذا طُلب إلغاء تثبيت وكان غير مثبّت → لا شيء
       if (unpinOnly && !isPinned) return;
 
       final newValue = unpinOnly ? false : !isPinned;
@@ -346,7 +343,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
       HapticFeedback.mediumImpact();
 
-      // تحديث القائمة + المثبتات
       await _loadMessages();
       await _loadPinnedMessages();
 
@@ -429,7 +425,6 @@ class _ChatScreenState extends State<ChatScreen> {
                 ),
               ),
 
-              // ✅ تثبيت / إلغاء تثبيت (جديد - أول عنصر)
               _OptionItem(
                 icon: isPinned ? Icons.push_pin : Icons.push_pin_outlined,
                 label: isPinned ? 'إلغاء التثبيت' : 'تثبيت',
@@ -440,7 +435,6 @@ class _ChatScreenState extends State<ChatScreen> {
                 },
               ),
 
-              // الرد
               _OptionItem(
                 icon: Icons.reply,
                 label: 'رد',
@@ -450,7 +444,6 @@ class _ChatScreenState extends State<ChatScreen> {
                 },
               ),
 
-              // التوجيه
               _OptionItem(
                 icon: Icons.forward,
                 label: 'توجيه',
@@ -460,7 +453,6 @@ class _ChatScreenState extends State<ChatScreen> {
                 },
               ),
 
-              // نسخ (للنصوص فقط)
               if (isText && hasText)
                 _OptionItem(
                   icon: Icons.copy_outlined,
@@ -478,7 +470,6 @@ class _ChatScreenState extends State<ChatScreen> {
                     : AppTheme.lightDivider,
               ),
 
-              // حذف (فقط للرسائل الصادرة)
               if (isOutgoing)
                 _OptionItem(
                   icon: Icons.delete_outline,
@@ -946,12 +937,17 @@ class _ChatScreenState extends State<ChatScreen> {
 
     if (!granted || !mounted) return;
 
+    // ✅ الصور: إرسال متعدد
+    if (mediaType == AppConstants.mediaImage) {
+      await _pickAndSendMultipleImages();
+      return;
+    }
+
+    // الفيديو والملف: إرسال فردي
     String? pickedPath;
 
     try {
-      if (mediaType == AppConstants.mediaImage) {
-        pickedPath = await _pickImage();
-      } else if (mediaType == AppConstants.mediaVideo) {
+      if (mediaType == AppConstants.mediaVideo) {
         pickedPath = await _pickVideo();
       } else {
         pickedPath = await _pickFile();
@@ -990,15 +986,137 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  Future<String?> _pickImage() async {
-    final picker = ImagePicker();
-    final XFile? file = await picker.pickImage(
-      source: ImageSource.gallery,
-      imageQuality: 85,
-      maxWidth: 1920,
+  // ============================================
+  // === إرسال متعدد للصور (جديد) ===
+  // ============================================
+
+  Future<void> _pickAndSendMultipleImages() async {
+    List<String> paths;
+
+    try {
+      final picker = ImagePicker();
+      final List<XFile> files = await picker.pickMultiImage(
+        imageQuality: 85,
+        maxWidth: 1920,
+      );
+
+      if (files.isEmpty || !mounted) return;
+
+      paths = files.map((f) => f.path).toList();
+    } catch (e) {
+      debugPrint('[Chat] pickMultiImage error: $e');
+      _showError('تعذّر اختيار الصور');
+      return;
+    }
+
+    // إذا اختار صورة واحدة → استخدم الدالة الفردية
+    if (paths.length == 1) {
+      await _sendSingleImage(paths.first);
+      return;
+    }
+
+    setState(() => _isSendingMedia = true);
+
+    final replyId = _replyToId;
+    setState(() {
+      _replyToId = null;
+      _replyToMessage = null;
+    });
+
+    int successCount = 0;
+    int failCount = 0;
+
+    for (int i = 0; i < paths.length; i++) {
+      if (mounted) {
+        setState(() {
+          _multiSendProgress = 'إرسال ${i + 1}/${paths.length}';
+        });
+      }
+
+      try {
+        final result = await _messageService!.sendMedia(
+          peerDeviceId: widget.peer.deviceId,
+          filePath: paths[i],
+          mediaType: AppConstants.mediaImage,
+          replyToId: i == 0 ? replyId : null,
+        );
+
+        if (result.ok) {
+          successCount++;
+        } else {
+          failCount++;
+        }
+      } catch (e) {
+        debugPrint('[Chat] send image $i error: $e');
+        failCount++;
+      }
+    }
+
+    if (!mounted) return;
+
+    setState(() {
+      _isSendingMedia = false;
+      _multiSendProgress = null;
+    });
+
+    _scrollToBottom();
+
+    HapticFeedback.mediumImpact();
+
+    final String message;
+    final Color color;
+
+    if (failCount == 0) {
+      message = 'تم إرسال $successCount ${successCount == 1 ? "صورة" : "صور"} بنجاح';
+      color = AppTheme.successColor;
+    } else if (successCount == 0) {
+      message = 'فشل إرسال $failCount من الصور';
+      color = AppTheme.errorColor;
+    } else {
+      message = 'نجح $successCount وفشل $failCount';
+      color = AppTheme.warningColor;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: color,
+        duration: const Duration(seconds: 3),
+      ),
     );
-    return file?.path;
   }
+
+  Future<void> _sendSingleImage(String path) async {
+    setState(() => _isSendingMedia = true);
+
+    final replyId = _replyToId;
+    setState(() {
+      _replyToId = null;
+      _replyToMessage = null;
+    });
+
+    try {
+      final result = await _messageService!.sendMedia(
+        peerDeviceId: widget.peer.deviceId,
+        filePath: path,
+        mediaType: AppConstants.mediaImage,
+        replyToId: replyId,
+      );
+
+      if (!result.ok && mounted) {
+        _showError(result.error ?? 'فشل الإرسال');
+      }
+      _scrollToBottom();
+    } catch (e) {
+      if (mounted) _showError('فشل الإرسال: $e');
+    } finally {
+      if (mounted) setState(() => _isSendingMedia = false);
+    }
+  }
+
+  // ============================================
+  // === منتقي الصور والفيديو والملفات ===
+  // ============================================
 
   Future<String?> _pickVideo() async {
     final picker = ImagePicker();
@@ -1083,7 +1201,6 @@ class _ChatScreenState extends State<ChatScreen> {
           : _buildNormalAppBar(isDark, peerOnline),
       body: Column(
         children: [
-          // ✅ شريط الرسائل المثبتة (يظهر عند وجود مثبتات وليس بحث)
           if (_pinnedMessages.isNotEmpty &&
               !_isSearching &&
               _replyToMessage == null)
@@ -1107,6 +1224,7 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
           if (_replyToMessage != null && !_isRecording)
             _buildReplyBar(isDark),
+          if (_multiSendProgress != null) _buildMultiSendProgressBar(isDark),
           if (!_isSearching) ...[
             if (_isRecording)
               _buildRecordingBar(isDark)
@@ -1119,7 +1237,48 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   // ============================================
-  // === شريط المثبتات (جديد) ===
+  // === شريط التقدّم المتعدد (جديد) ===
+  // ============================================
+
+  Widget _buildMultiSendProgressBar(bool isDark) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppTheme.primaryColor.withOpacity(0.08),
+        border: Border(
+          top: BorderSide(
+            color: AppTheme.primaryColor.withOpacity(0.2),
+          ),
+        ),
+      ),
+      child: Row(
+        children: [
+          const SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: AppTheme.primaryColor,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              _multiSendProgress ?? 'جارٍ الإرسال...',
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: AppTheme.primaryColor,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ============================================
+  // === شريط المثبتات ===
   // ============================================
 
   Widget _buildPinnedBar(bool isDark) {
@@ -1172,7 +1331,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   children: [
                     Row(
                       children: [
-                        Text(
+                        const Text(
                           'رسالة مثبتة',
                           style: TextStyle(
                             fontSize: 11,
@@ -1219,7 +1378,6 @@ class _ChatScreenState extends State<ChatScreen> {
                   ],
                 ),
               ),
-              // زر إلغاء التثبيت
               Material(
                 color: Colors.transparent,
                 shape: const CircleBorder(),
@@ -1264,7 +1422,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   // ============================================
-  // === AppBar العادي ===
+  // === AppBar ===
   // ============================================
 
   PreferredSizeWidget _buildNormalAppBar(bool isDark, bool peerOnline) {
@@ -1446,6 +1604,10 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  // ============================================
+  // === شريط التسجيل ===
+  // ============================================
+
   Widget _buildRecordingBar(bool isDark) {
     return SafeArea(
       top: false,
@@ -1516,6 +1678,10 @@ class _ChatScreenState extends State<ChatScreen> {
     return '$m:${s.toString().padLeft(2, '0')}';
   }
 
+  // ============================================
+  // === شريط الإدخال ===
+  // ============================================
+
   Widget _buildInputBar(bool isDark, bool peerOnline) {
     return SafeArea(
       top: false,
@@ -1561,12 +1727,18 @@ class _ChatScreenState extends State<ChatScreen> {
                   textInputAction: TextInputAction.newline,
                   keyboardType: TextInputType.multiline,
                   decoration: InputDecoration(
-                    hintText:
-                        peerOnline ? 'اكتب رسالة...' : 'الجهاز غير متصل',
+                    hintText: _multiSendProgress ??
+                        (peerOnline ? 'اكتب رسالة...' : 'الجهاز غير متصل'),
                     hintStyle: TextStyle(
-                      color: isDark
-                          ? AppTheme.darkTextSecondary
-                          : AppTheme.lightTextSecondary,
+                      color: _multiSendProgress != null
+                          ? AppTheme.primaryColor
+                          : (isDark
+                              ? AppTheme.darkTextSecondary
+                              : AppTheme.lightTextSecondary),
+                      fontSize: 15,
+                      fontWeight: _multiSendProgress != null
+                          ? FontWeight.w600
+                          : FontWeight.normal,
                     ),
                     contentPadding: const EdgeInsets.symmetric(
                       horizontal: 16,
@@ -1621,6 +1793,10 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
     );
   }
+
+  // ============================================
+  // === قائمة الرسائل ===
+  // ============================================
 
   Widget _buildMessagesList(bool isDark) {
     final items = _filteredMessages.reversed.toList();
@@ -1821,35 +1997,49 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
         child: SafeArea(
           top: false,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              _attachOption(
-                icon: Icons.image_outlined,
-                label: 'صورة',
-                color: Colors.purple,
-                onTap: () {
-                  Navigator.pop(context);
-                  _pickAndSendMedia(AppConstants.mediaImage);
-                },
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                  _attachOption(
+                    icon: Icons.image_outlined,
+                    label: 'صور',
+                    color: Colors.purple,
+                    onTap: () {
+                      Navigator.pop(context);
+                      _pickAndSendMedia(AppConstants.mediaImage);
+                    },
+                  ),
+                  _attachOption(
+                    icon: Icons.videocam_outlined,
+                    label: 'فيديو',
+                    color: Colors.red,
+                    onTap: () {
+                      Navigator.pop(context);
+                      _pickAndSendMedia(AppConstants.mediaVideo);
+                    },
+                  ),
+                  _attachOption(
+                    icon: Icons.insert_drive_file_outlined,
+                    label: 'ملف',
+                    color: Colors.blue,
+                    onTap: () {
+                      Navigator.pop(context);
+                      _pickAndSendMedia(AppConstants.mediaFile);
+                    },
+                  ),
+                ],
               ),
-              _attachOption(
-                icon: Icons.videocam_outlined,
-                label: 'فيديو',
-                color: Colors.red,
-                onTap: () {
-                  Navigator.pop(context);
-                  _pickAndSendMedia(AppConstants.mediaVideo);
-                },
-              ),
-              _attachOption(
-                icon: Icons.insert_drive_file_outlined,
-                label: 'ملف',
-                color: Colors.blue,
-                onTap: () {
-                  Navigator.pop(context);
-                  _pickAndSendMedia(AppConstants.mediaFile);
-                },
+              const SizedBox(height: 8),
+              // تلميح
+              Text(
+                'يمكنك اختيار عدة صور دفعة واحدة',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: Colors.grey.shade500,
+                ),
               ),
             ],
           ),
@@ -1929,7 +2119,7 @@ class _ChatScreenState extends State<ChatScreen> {
 }
 
 // ============================================================
-// === قائمة كل المثبتات (Bottom Sheet) ===
+// === قائمة كل المثبتات ===
 // ============================================================
 class _PinnedMessagesSheet extends StatelessWidget {
   final List<Map<String, dynamic>> pinnedMessages;
@@ -1960,7 +2150,6 @@ class _PinnedMessagesSheet extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // مؤشر السحب
           Container(
             width: 40,
             height: 4,
@@ -1970,8 +2159,6 @@ class _PinnedMessagesSheet extends StatelessWidget {
               borderRadius: BorderRadius.circular(2),
             ),
           ),
-
-          // العنوان
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Row(
@@ -1993,8 +2180,6 @@ class _PinnedMessagesSheet extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 8),
-
-          // القائمة
           Flexible(
             child: ListView.separated(
               padding: const EdgeInsets.only(bottom: 16),
@@ -2069,7 +2254,6 @@ class _PinnedMessageTile extends StatelessWidget {
           ),
           child: Row(
             children: [
-              // رقم
               Container(
                 width: 28,
                 height: 28,
@@ -2088,8 +2272,6 @@ class _PinnedMessageTile extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 12),
-
-              // المحتوى
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -2143,8 +2325,6 @@ class _PinnedMessageTile extends StatelessWidget {
                   ],
                 ),
               ),
-
-              // زر إلغاء التثبيت
               Material(
                 color: Colors.transparent,
                 shape: const CircleBorder(),
@@ -2446,7 +2626,6 @@ class _MessageBubble extends StatelessWidget {
                   offset: const Offset(0, 1),
                 ),
               ],
-              // ✅ إطار للرسائل المثبتة
               border: isPinned
                   ? Border.all(
                       color: AppTheme.primaryColor.withOpacity(0.5),
@@ -2457,7 +2636,6 @@ class _MessageBubble extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // ✅ شارة التثبيت
                 if (isPinned)
                   Padding(
                     padding: const EdgeInsets.only(
