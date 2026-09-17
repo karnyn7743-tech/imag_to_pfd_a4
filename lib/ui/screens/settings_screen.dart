@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import '../../core/constants.dart';
 import '../../core/discovery/device_discovery.dart';
 import '../../core/providers/theme_provider.dart';
+import '../../core/services/ringtone_service.dart';
 import '../../data/database/database_helper.dart';
 import '../theme/app_theme.dart';
 import '../widgets/permission_dialog.dart';
@@ -202,7 +203,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   // ============================================
-  // === عرض QR ===
+  // === QR ===
   // ============================================
 
   void _openQrDisplay() {
@@ -554,7 +555,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 _buildNumberSection(),
                 const _SectionTitle(title: 'المظهر'),
                 _buildThemeSection(),
-                const _SectionTitle(title: 'الإشعارات والأصوات'),
+                const _SectionTitle(title: 'الرنين والأصوات'),
+                _buildRingtoneSection(),
+                const _SectionTitle(title: 'الإشعارات'),
                 _buildNotificationsSection(),
                 const _SectionTitle(title: 'الموثوقية في الخلفية'),
                 _buildReliabilitySection(),
@@ -676,13 +679,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   // ============================================
-  // === قسم الرقم + QR (محدّث) ===
+  // === رقم الاتصال + QR ===
   // ============================================
 
   Widget _buildNumberSection() {
     return _SettingsCard(
       children: [
-        // الرقم
         ListTile(
           leading: Container(
             width: 48,
@@ -712,8 +714,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
           trailing: const Icon(Icons.chevron_left),
           onTap: _editDeviceNumber,
         ),
-
-        // ✅ جديد: عرض QR
         ListTile(
           leading: Container(
             width: 48,
@@ -730,9 +730,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
           title: const Text('رمز QR للمشاركة'),
-          subtitle: const Text(
-            'اعرض رمزك ليقترن الآخرون بك',
-          ),
+          subtitle: const Text('اعرض رمزك ليقترن الآخرون بك'),
           trailing: const Icon(Icons.chevron_left),
           onTap: _openQrDisplay,
         ),
@@ -784,6 +782,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   // ============================================
+  // === الرنين (قسم جديد) ===
+  // ============================================
+
+  Widget _buildRingtoneSection() {
+    final ringtoneService = context.watch<RingtoneService>();
+
+    return _SettingsCard(
+      children: RingtoneType.values.map((type) {
+        final isSelected = ringtoneService.type == type;
+        return _RingtoneOption(
+          type: type,
+          isSelected: isSelected,
+          onSelect: () async {
+            await ringtoneService.setType(type);
+            if (type != RingtoneType.silent) {
+              await ringtoneService.preview(type);
+            }
+          },
+          onPreview: type == RingtoneType.silent
+              ? null
+              : () => ringtoneService.preview(type),
+        );
+      }).toList(),
+    );
+  }
+
+  // ============================================
   // === الإشعارات ===
   // ============================================
 
@@ -793,8 +818,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         SwitchListTile(
           value: _soundEnabled,
           onChanged: _toggleSound,
-          title: const Text('نغمة الرنين'),
-          subtitle: const Text('تشغيل نغمة عند وصول مكالمة'),
+          title: const Text('تشغيل الأصوات'),
+          subtitle: const Text('تفعيل أصوات التطبيق'),
           secondary: const Icon(Icons.volume_up_outlined),
           contentPadding: const EdgeInsets.symmetric(horizontal: 8),
         ),
@@ -1045,6 +1070,154 @@ class _InfoTile extends StatelessWidget {
               onPressed: onCopy,
             )
           : null,
+    );
+  }
+}
+
+// ============================================================
+// === خيار رنين ===
+// ============================================================
+class _RingtoneOption extends StatelessWidget {
+  final RingtoneType type;
+  final bool isSelected;
+  final VoidCallback onSelect;
+  final VoidCallback? onPreview;
+
+  const _RingtoneOption({
+    required this.type,
+    required this.isSelected,
+    required this.onSelect,
+    this.onPreview,
+  });
+
+  IconData get _icon {
+    switch (type) {
+      case RingtoneType.ringtone:
+        return Icons.phone_in_talk_outlined;
+      case RingtoneType.alarm:
+        return Icons.alarm;
+      case RingtoneType.notification:
+        return Icons.notifications_active_outlined;
+      case RingtoneType.silent:
+        return Icons.volume_off_outlined;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onSelect,
+        child: Container(
+          padding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 12,
+          ),
+          decoration: BoxDecoration(
+            color: isSelected
+                ? AppTheme.primaryColor.withOpacity(0.08)
+                : Colors.transparent,
+            border: Border(
+              bottom: BorderSide(
+                color: isDark
+                    ? AppTheme.darkDivider
+                    : AppTheme.lightDivider,
+                width: 0.5,
+              ),
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                isSelected
+                    ? Icons.radio_button_checked
+                    : Icons.radio_button_unchecked,
+                color: isSelected
+                    ? AppTheme.primaryColor
+                    : (isDark
+                        ? AppTheme.darkTextSecondary
+                        : AppTheme.lightTextSecondary),
+                size: 22,
+              ),
+              const SizedBox(width: 12),
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: isSelected
+                      ? AppTheme.primaryColor.withOpacity(0.15)
+                      : (isDark
+                          ? AppTheme.darkDivider
+                          : const Color(0xFFF1F3F5)),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                alignment: Alignment.center,
+                child: Icon(
+                  _icon,
+                  size: 20,
+                  color: isSelected
+                      ? AppTheme.primaryColor
+                      : (isDark
+                          ? AppTheme.darkTextSecondary
+                          : AppTheme.lightTextSecondary),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      type.label,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight:
+                            isSelected ? FontWeight.w600 : FontWeight.w500,
+                        color: isSelected
+                            ? AppTheme.primaryColor
+                            : (isDark
+                                ? AppTheme.darkTextPrimary
+                                : AppTheme.lightTextPrimary),
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      type.description,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: isDark
+                            ? AppTheme.darkTextSecondary
+                            : AppTheme.lightTextSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (onPreview != null)
+                Material(
+                  color: AppTheme.primaryColor.withOpacity(0.12),
+                  shape: const CircleBorder(),
+                  child: InkWell(
+                    customBorder: const CircleBorder(),
+                    onTap: onPreview,
+                    child: const Padding(
+                      padding: EdgeInsets.all(8),
+                      child: Icon(
+                        Icons.play_arrow_rounded,
+                        color: AppTheme.primaryColor,
+                        size: 22,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
