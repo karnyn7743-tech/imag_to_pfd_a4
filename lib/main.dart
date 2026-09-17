@@ -12,6 +12,7 @@ import 'core/discovery/discovered_device.dart';
 import 'core/messaging/message_service.dart';
 import 'core/providers/theme_provider.dart';
 import 'core/rtc/rtc_service.dart';
+import 'core/services/activation_service.dart';
 import 'core/services/app_lifecycle_service.dart';
 import 'core/services/local_notification_service.dart';
 import 'core/services/lock_service.dart';
@@ -20,6 +21,7 @@ import 'core/services/permission_service.dart';
 import 'core/services/ringtone_service.dart';
 import 'core/signaling/signaling_service.dart';
 import 'data/database/database_helper.dart';
+import 'ui/screens/activation_screen.dart';
 import 'ui/screens/audio_call_screen.dart';
 import 'ui/screens/chat_screen.dart';
 import 'ui/screens/lock_screen.dart';
@@ -85,37 +87,58 @@ class LanPhoneApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
+        // ==========================================
         // 1) مزوّد الثيم
+        // ==========================================
         ChangeNotifierProvider<ThemeProvider>(
           create: (_) => ThemeProvider(),
         ),
 
+        // ==========================================
         // 2) خدمة الرنات
+        // ==========================================
         ChangeNotifierProvider<RingtoneService>(
           create: (_) => RingtoneService()..load(),
         ),
 
+        // ==========================================
         // 3) دورة حياة التطبيق
+        // ==========================================
         ChangeNotifierProvider<AppLifecycleService>(
           create: (_) => AppLifecycleService(),
         ),
 
-        // 4) خدمة القفل بالبصمة (جديد)
+        // ==========================================
+        // 4) قفل التطبيق بالبصمة
+        // ==========================================
         ChangeNotifierProvider<LockService>(
           create: (_) => LockService(),
         ),
 
-        // 5) خدمة إشعارات Callkit
+        // ==========================================
+        // 5) ✅ خدمة التنشيط
+        // ==========================================
+        ChangeNotifierProvider<ActivationService>(
+          create: (_) => ActivationService(),
+        ),
+
+        // ==========================================
+        // 6) خدمة إشعارات Callkit
+        // ==========================================
         ChangeNotifierProvider<NotificationService>(
           create: (_) => NotificationService(),
         ),
 
-        // 6) اكتشاف الأجهزة
+        // ==========================================
+        // 7) اكتشاف الأجهزة
+        // ==========================================
         ChangeNotifierProvider<DeviceDiscovery>(
           create: (_) => DeviceDiscovery()..start(),
         ),
 
-        // 7) Signaling
+        // ==========================================
+        // 8) Signaling
+        // ==========================================
         ChangeNotifierProxyProvider<DeviceDiscovery, SignalingService>(
           create: (_) => SignalingService()..start(),
           update: (_, discovery, signaling) {
@@ -124,7 +147,9 @@ class LanPhoneApp extends StatelessWidget {
           },
         ),
 
-        // 8) RTC
+        // ==========================================
+        // 9) RTC
+        // ==========================================
         ChangeNotifierProxyProvider2<SignalingService, NotificationService,
             RtcService>(
           create: (_) => RtcService(),
@@ -135,7 +160,9 @@ class LanPhoneApp extends StatelessWidget {
           },
         ),
 
-        // 9) الرسائل + الإشعارات + دورة الحياة
+        // ==========================================
+        // 10) الرسائل
+        // ==========================================
         ChangeNotifierProxyProvider3<
             DeviceDiscovery,
             SignalingService,
@@ -165,10 +192,17 @@ class _AppRoot extends StatefulWidget {
 }
 
 class _AppRootState extends State<_AppRoot> {
+  // ============================================
+  // === المراجع ===
+  // ============================================
   StreamSubscription<RtcEvent>? _rtcSub;
   RtcService? _rtc;
   DeviceDiscovery? _discovery;
   bool _callScreenOpen = false;
+
+  // ============================================
+  // === دورة الحياة ===
+  // ============================================
 
   @override
   void initState() {
@@ -206,6 +240,10 @@ class _AppRootState extends State<_AppRoot> {
     };
   }
 
+  // ============================================
+  // === فتح محادثة من إشعار ===
+  // ============================================
+
   void _openChatFromNotification(
     String peerDeviceId,
     String? messageId,
@@ -218,6 +256,10 @@ class _AppRootState extends State<_AppRoot> {
       debugPrint('[AppRoot] Peer not found: $peerDeviceId');
       return;
     }
+
+    debugPrint(
+      '[AppRoot] Opening chat from notification: $peerDeviceId',
+    );
 
     nav.push(
       MaterialPageRoute(
@@ -236,6 +278,7 @@ class _AppRootState extends State<_AppRoot> {
   void _onRtcEvent(RtcEvent event) {
     switch (event.type) {
       case RtcEventType.incomingCall:
+        // Callkit يعرض الواجهة تلقائيًا
         debugPrint('[AppRoot] Incoming call — Callkit handles UI');
         break;
 
@@ -302,9 +345,11 @@ class _AppRootState extends State<_AppRoot> {
         GlobalCupertinoLocalizations.delegate,
       ],
 
-      // ✅ شاشة القفل تُعرض فوق كل شيء عند الحاجة
+      // ==========================================
+      // ✅ بوابة التنشيط + القفل
+      // ==========================================
       builder: (context, child) {
-        return _LockGate(child: child ?? const SizedBox.shrink());
+        return _AppGates(child: child ?? const SizedBox.shrink());
       },
 
       home: const SplashScreen(),
@@ -313,29 +358,84 @@ class _AppRootState extends State<_AppRoot> {
 }
 
 // ============================================================
-// === بوابة القفل ===
+// === بوابات التطبيق (التنشيط + القفل) ===
 // ============================================================
-class _LockGate extends StatelessWidget {
+class _AppGates extends StatelessWidget {
   final Widget child;
 
-  const _LockGate({required this.child});
+  const _AppGates({required this.child});
 
   @override
   Widget build(BuildContext context) {
-    // ✅ راقب حالة القفل
-    final isLocked = context.select<LockService, bool>(
+    // ============================================
+    // === 1) فحص التنشيط ===
+    // ============================================
+    final activation = context.watch<ActivationService>();
+
+    // جارٍ التحقق → عرض شاشة تحميل
+    if (activation.checking) {
+      return const _LoadingGate();
+    }
+
+    // غير مُنشَّط → شاشة التنشيط
+    if (!activation.activated) {
+      return const ActivationScreen();
+    }
+
+    // ============================================
+    // === 2) بوابة القفل (فقط إذا نشِط) ===
+    // ============================================
+    final locked = context.select<LockService, bool>(
       (s) => s.isLocked,
     );
 
-    // إذا كان مقفلًا، اعرض شاشة القفل فوق التطبيق
+    // أثناء مكالمة نشطة → لا تقفل
+    final inCall = context.select<RtcService, bool>(
+      (r) => r.isInCall,
+    );
+
     return Stack(
       children: [
         child,
-        if (isLocked)
+        if (locked && !inCall)
           const Positioned.fill(
             child: LockScreen(),
           ),
       ],
+    );
+  }
+}
+
+// ============================================================
+// === شاشة التحميل المؤقتة ===
+// ============================================================
+class _LoadingGate extends StatelessWidget {
+  const _LoadingGate();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Scaffold(
+      backgroundColor: Color(0xFF0A1A1F),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            CircularProgressIndicator(
+              valueColor: AlwaysStoppedAnimation<Color>(
+                AppTheme.primaryColor,
+              ),
+            ),
+            SizedBox(height: 20),
+            Text(
+              'جارٍ التحقق...',
+              style: TextStyle(
+                color: Colors.white70,
+                fontSize: 14,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
