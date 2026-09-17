@@ -20,9 +20,8 @@ class DevicesTab extends StatelessWidget {
       builder: (context, discovery, _) {
         final allDevices = discovery.devices;
         final onlineDevices = discovery.onlineDevices;
-        final offlineDevices = allDevices
-            .where((d) => !d.isOnline)
-            .toList();
+        final offlineDevices =
+            allDevices.where((d) => !d.isOnline).toList();
 
         if (!discovery.isRunning) {
           return const _LoadingState(
@@ -32,9 +31,7 @@ class DevicesTab extends StatelessWidget {
 
         if (allDevices.isEmpty) {
           return _EmptyDevicesState(
-            onRefresh: () {
-              discovery.refreshNow();
-            },
+            onRefresh: () => discovery.refreshNow(),
           );
         }
 
@@ -47,18 +44,13 @@ class DevicesTab extends StatelessWidget {
             physics: const AlwaysScrollableScrollPhysics(),
             padding: const EdgeInsets.symmetric(vertical: 8),
             children: [
-              // ============================================
-              // === ملخص الحالة ===
-              // ============================================
               _StatusBar(
                 online: onlineDevices.length,
                 total: allDevices.length,
                 localIp: discovery.localIp,
+                myNumber: discovery.deviceNumber,
               ),
 
-              // ============================================
-              // === الأجهزة المتصلة ===
-              // ============================================
               if (onlineDevices.isNotEmpty) ...[
                 const _SectionHeader(title: 'الأجهزة المتصلة'),
                 ...onlineDevices.map(
@@ -66,9 +58,6 @@ class DevicesTab extends StatelessWidget {
                 ),
               ],
 
-              // ============================================
-              // === الأجهزة غير المتصلة ===
-              // ============================================
               if (offlineDevices.isNotEmpty) ...[
                 const _SectionHeader(title: 'الأجهزة السابقة'),
                 ...offlineDevices.map(
@@ -86,17 +75,19 @@ class DevicesTab extends StatelessWidget {
 }
 
 // ============================================================
-// === شريط الحالة ===
+// === شريط الحالة (مع رقمي) ===
 // ============================================================
 class _StatusBar extends StatelessWidget {
   final int online;
   final int total;
   final String localIp;
+  final String myNumber;
 
   const _StatusBar({
     required this.online,
     required this.total,
     required this.localIp,
+    required this.myNumber,
   });
 
   @override
@@ -127,20 +118,52 @@ class _StatusBar extends StatelessWidget {
       ),
       child: Row(
         children: [
+          // رقمي (بارز)
           Container(
-            width: 48,
-            height: 48,
+            width: 64,
+            height: 64,
             decoration: BoxDecoration(
-              color: AppTheme.primaryColor.withOpacity(0.2),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(
-              Icons.wifi_tethering,
               color: AppTheme.primaryColor,
-              size: 26,
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: AppTheme.primaryColor.withOpacity(0.4),
+                  blurRadius: 8,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            alignment: Alignment.center,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'رقمي',
+                  style: TextStyle(
+                    color: Colors.white70,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  myNumber.isEmpty ? '----' : myNumber,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 1.5,
+                    fontFeatures: [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ],
             ),
           ),
+
           const SizedBox(width: 14),
+
+          // معلومات إضافية
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -151,7 +174,7 @@ class _StatusBar extends StatelessWidget {
                       ? 'لا توجد أجهزة متصلة'
                       : '$online ${online == 1 ? "جهاز متصل" : "أجهزة متصلة"}',
                   style: TextStyle(
-                    fontSize: 16,
+                    fontSize: 15,
                     fontWeight: FontWeight.w600,
                     color: isDark
                         ? AppTheme.darkTextPrimary
@@ -162,7 +185,7 @@ class _StatusBar extends StatelessWidget {
                 Text(
                   localIp.isEmpty
                       ? 'جارٍ اكتشاف الشبكة...'
-                      : 'IP الجهاز: $localIp',
+                      : 'IP: $localIp',
                   style: TextStyle(
                     fontSize: 12,
                     color: isDark
@@ -209,7 +232,7 @@ class _SectionHeader extends StatelessWidget {
 }
 
 // ============================================================
-// === صف جهاز ===
+// === صف جهاز (مع الرقم) ===
 // ============================================================
 class _DeviceTile extends StatelessWidget {
   final DiscoveredDevice device;
@@ -244,9 +267,6 @@ class _DeviceTile extends StatelessWidget {
             ),
             child: Row(
               children: [
-                // ============================================
-                // === الأفاتار ===
-                // ============================================
                 _DeviceAvatar(
                   name: device.name,
                   isOnline: isOnline,
@@ -254,24 +274,53 @@ class _DeviceTile extends StatelessWidget {
 
                 const SizedBox(width: 14),
 
-                // ============================================
-                // === الاسم والمعلومات ===
-                // ============================================
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text(
-                        device.name,
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: isDark
-                              ? AppTheme.darkTextPrimary
-                              : AppTheme.lightTextPrimary,
-                        ),
-                        overflow: TextOverflow.ellipsis,
+                      // الاسم + الرقم
+                      Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              device.name,
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                                color: isDark
+                                    ? AppTheme.darkTextPrimary
+                                    : AppTheme.lightTextPrimary,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          if (device.hasValidNumber) ...[
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: AppTheme.primaryColor
+                                    .withOpacity(0.15),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                '#${device.number}',
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                  color: AppTheme.primaryColor,
+                                  fontFeatures: [
+                                    FontFeature.tabularFigures(),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
                       ),
                       const SizedBox(height: 4),
                       Row(
@@ -304,9 +353,6 @@ class _DeviceTile extends StatelessWidget {
                   ),
                 ),
 
-                // ============================================
-                // === الأزرار السريعة ===
-                // ============================================
                 if (isOnline) ...[
                   _IconActionButton(
                     icon: Icons.call_outlined,
@@ -338,9 +384,6 @@ class _DeviceTile extends StatelessWidget {
     );
   }
 
-  // ============================================
-  // === فتح محادثة ===
-  // ============================================
   void _openChat(BuildContext context) {
     Navigator.of(context).push(
       MaterialPageRoute(
@@ -349,14 +392,10 @@ class _DeviceTile extends StatelessWidget {
     );
   }
 
-  // ============================================
-  // === بدء مكالمة من الزر السريع ===
-  // ============================================
   Future<void> _callFromTile(
     BuildContext context, {
     required bool isVideo,
   }) async {
-    // ✅ استخدام ph.Permission بدل Permission
     final permissions = isVideo
         ? <ph.Permission>[
             ph.Permission.microphone,
@@ -379,7 +418,6 @@ class _DeviceTile extends StatelessWidget {
 
     if (!context.mounted) return;
 
-    // افتح المحادثة ثم ابدأ المكالمة (أبسط تدفق)
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => ChatScreen(peer: device),
@@ -499,7 +537,7 @@ class _IconActionButton extends StatelessWidget {
 }
 
 // ============================================================
-// === حالة فارغة (لا توجد أجهزة) ===
+// === حالة فارغة ===
 // ============================================================
 class _EmptyDevicesState extends StatelessWidget {
   final VoidCallback onRefresh;
