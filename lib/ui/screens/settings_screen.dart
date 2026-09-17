@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import '../../core/constants.dart';
 import '../../core/discovery/device_discovery.dart';
 import '../../core/providers/theme_provider.dart';
+import '../../core/services/lock_service.dart';
 import '../../core/services/ringtone_service.dart';
 import '../../data/database/database_helper.dart';
 import '../theme/app_theme.dart';
@@ -231,6 +232,72 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _toggleSound(bool value) async {
     setState(() => _soundEnabled = value);
+  }
+
+  // ============================================
+  // === قفل التطبيق (جديد) ===
+  // ============================================
+
+  Future<void> _toggleLock(bool value) async {
+    final lockService = context.read<LockService>();
+
+    // إذا لم تكن البصمة متوفرة → أظهر تنبيهًا
+    if (value && !lockService.available) {
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          icon: const Icon(
+            Icons.fingerprint,
+            size: 40,
+            color: AppTheme.warningColor,
+          ),
+          title: const Text('البصمة غير متوفرة'),
+          content: const Text(
+            'لتستخدم قفل التطبيق، يجب أولًا:\n\n'
+            '1. تسجيل بصمة على جهازك\n'
+            '2. من الإعدادات ← الأمان ← البصمة\n\n'
+            'بعدها عُد وفعّل الخيار.',
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('حسنًا'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+
+    final ok = await lockService.setEnabled(value);
+
+    if (!mounted) return;
+
+    if (ok) {
+      _showSnack(
+        value ? 'تم تفعيل قفل التطبيق' : 'تم إلغاء قفل التطبيق',
+        isSuccess: true,
+      );
+    } else if (value) {
+      _showSnack('لم يتم التحقق. لم يُفعَّل القفل.');
+    }
+  }
+
+  Future<void> _selectLockDelay(LockDelay current) async {
+    final lockService = context.read<LockService>();
+
+    final selected = await showModalBottomSheet<LockDelay>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => _LockDelaySheet(currentDelay: current),
+    );
+
+    if (selected == null || selected == current) return;
+
+    await lockService.setDelay(selected);
+
+    if (!mounted) return;
+    _showSnack('تم تحديث تأخير القفل', isSuccess: true);
   }
 
   // ============================================
@@ -553,6 +620,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 _buildDeviceHeader(),
                 const _SectionTitle(title: 'رقم الاتصال والاقتران'),
                 _buildNumberSection(),
+                const _SectionTitle(title: 'الأمان'),
+                _buildLockSection(),
                 const _SectionTitle(title: 'المظهر'),
                 _buildThemeSection(),
                 const _SectionTitle(title: 'الرنين والأصوات'),
@@ -570,6 +639,101 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 const SizedBox(height: 32),
               ],
             ),
+    );
+  }
+
+  // ============================================
+  // === قسم قفل التطبيق (جديد) ===
+  // ============================================
+
+  Widget _buildLockSection() {
+    final lockService = context.watch<LockService>();
+
+    return _SettingsCard(
+      children: [
+        // التفعيل
+        SwitchListTile(
+          value: lockService.enabled,
+          onChanged: _toggleLock,
+          title: const Text('قفل التطبيق بالبصمة'),
+          subtitle: Text(
+            lockService.available
+                ? lockService.biometricDescription
+                : 'البصمة غير متوفرة على هذا الجهاز',
+            style: TextStyle(
+              color: lockService.available
+                  ? null
+                  : AppTheme.warningColor,
+            ),
+          ),
+          secondary: Icon(
+            lockService.enabled ? Icons.lock : Icons.lock_open_outlined,
+            color: lockService.enabled
+                ? AppTheme.primaryColor
+                : null,
+          ),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+        ),
+
+        // تأخير القفل (يظهر فقط عند التفعيل)
+        if (lockService.enabled)
+          ListTile(
+            leading: const Icon(Icons.timer_outlined),
+            title: const Text('وقت القفل التلقائي'),
+            subtitle: Text(
+              lockService.delay.label,
+              style: const TextStyle(
+                color: AppTheme.primaryColor,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            trailing: const Icon(Icons.chevron_left),
+            onTap: () => _selectLockDelay(lockService.delay),
+          ),
+
+        // زر قفل الآن (يدوي)
+        if (lockService.enabled)
+          ListTile(
+            leading: const Icon(
+              Icons.lock_clock,
+              color: AppTheme.primaryColor,
+            ),
+            title: const Text('اقفل التطبيق الآن'),
+            subtitle: const Text('يقفل فورًا ويطلب البصمة عند العودة'),
+            trailing: const Icon(Icons.chevron_left),
+            onTap: () {
+              lockService.lock();
+              Navigator.of(context).popUntil((r) => r.isFirst);
+            },
+          ),
+
+        // تلميح عندما لا تتوفر البصمة
+        if (!lockService.available)
+          Container(
+            margin: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: AppTheme.warningColor.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Row(
+              children: [
+                Icon(
+                  Icons.info_outline,
+                  size: 18,
+                  color: AppTheme.warningColor,
+                ),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'لتستخدم هذه الميزة، سجّل بصمة من إعدادات جهازك أولًا.',
+                    style: TextStyle(fontSize: 12),
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
     );
   }
 
@@ -679,7 +843,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   // ============================================
-  // === رقم الاتصال + QR ===
+  // === الرقم + QR ===
   // ============================================
 
   Widget _buildNumberSection() {
@@ -782,7 +946,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   // ============================================
-  // === الرنين (قسم جديد) ===
+  // === الرنين ===
   // ============================================
 
   Widget _buildRingtoneSection() {
@@ -981,6 +1145,96 @@ class _SettingsScreenState extends State<SettingsScreen> {
 }
 
 // ============================================================
+// === قائمة تأخير القفل ===
+// ============================================================
+class _LockDelaySheet extends StatelessWidget {
+  final LockDelay currentDelay;
+
+  const _LockDelaySheet({required this.currentDelay});
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      decoration: BoxDecoration(
+        color: isDark ? AppTheme.darkSurface : Colors.white,
+        borderRadius: const BorderRadius.vertical(
+          top: Radius.circular(24),
+        ),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40,
+              height: 4,
+              margin: const EdgeInsets.only(bottom: 12),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade400,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 8, 20, 12),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.timer_outlined,
+                    color: AppTheme.primaryColor,
+                    size: 22,
+                  ),
+                  SizedBox(width: 10),
+                  Text(
+                    'متى يُقفل التطبيق؟',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            ...LockDelay.values.map((delay) {
+              final isSelected = delay == currentDelay;
+              return ListTile(
+                leading: Icon(
+                  isSelected
+                      ? Icons.radio_button_checked
+                      : Icons.radio_button_unchecked,
+                  color: isSelected
+                      ? AppTheme.primaryColor
+                      : (isDark
+                          ? AppTheme.darkTextSecondary
+                          : AppTheme.lightTextSecondary),
+                ),
+                title: Text(
+                  delay.label,
+                  style: TextStyle(
+                    fontWeight:
+                        isSelected ? FontWeight.w600 : FontWeight.w500,
+                    color: isSelected ? AppTheme.primaryColor : null,
+                  ),
+                ),
+                subtitle: Text(
+                  delay.description,
+                  style: const TextStyle(fontSize: 12),
+                ),
+                onTap: () => Navigator.pop(context, delay),
+              );
+            }),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================
 // === عناصر مساعدة ===
 // ============================================================
 
@@ -1074,9 +1328,6 @@ class _InfoTile extends StatelessWidget {
   }
 }
 
-// ============================================================
-// === خيار رنين ===
-// ============================================================
 class _RingtoneOption extends StatelessWidget {
   final RingtoneType type;
   final bool isSelected;
