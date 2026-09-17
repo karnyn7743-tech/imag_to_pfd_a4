@@ -16,6 +16,7 @@ import 'core/services/app_lifecycle_service.dart';
 import 'core/services/local_notification_service.dart';
 import 'core/services/notification_service.dart';
 import 'core/services/permission_service.dart';
+import 'core/services/ringtone_service.dart';
 import 'core/signaling/signaling_service.dart';
 import 'data/database/database_helper.dart';
 import 'ui/screens/audio_call_screen.dart';
@@ -87,22 +88,27 @@ class LanPhoneApp extends StatelessWidget {
           create: (_) => ThemeProvider(),
         ),
 
-        // 2) دورة حياة التطبيق (جديد)
+        // 2) ✅ خدمة الرنات
+        ChangeNotifierProvider<RingtoneService>(
+          create: (_) => RingtoneService()..load(),
+        ),
+
+        // 3) دورة حياة التطبيق
         ChangeNotifierProvider<AppLifecycleService>(
           create: (_) => AppLifecycleService(),
         ),
 
-        // 3) خدمة إشعارات Callkit
+        // 4) خدمة إشعارات Callkit
         ChangeNotifierProvider<NotificationService>(
           create: (_) => NotificationService(),
         ),
 
-        // 4) اكتشاف الأجهزة
+        // 5) اكتشاف الأجهزة
         ChangeNotifierProvider<DeviceDiscovery>(
           create: (_) => DeviceDiscovery()..start(),
         ),
 
-        // 5) Signaling
+        // 6) Signaling
         ChangeNotifierProxyProvider<DeviceDiscovery, SignalingService>(
           create: (_) => SignalingService()..start(),
           update: (_, discovery, signaling) {
@@ -111,7 +117,7 @@ class LanPhoneApp extends StatelessWidget {
           },
         ),
 
-        // 6) RTC
+        // 7) RTC
         ChangeNotifierProxyProvider2<SignalingService, NotificationService,
             RtcService>(
           create: (_) => RtcService(),
@@ -122,7 +128,7 @@ class LanPhoneApp extends StatelessWidget {
           },
         ),
 
-        // 7) الرسائل + الإشعارات + دورة الحياة
+        // 8) الرسائل + الإشعارات + دورة الحياة
         ChangeNotifierProxyProvider3<
             DeviceDiscovery,
             SignalingService,
@@ -184,7 +190,6 @@ class _AppRootState extends State<_AppRoot> {
     _rtcSub = _rtc!.events.listen(_onRtcEvent);
   }
 
-  /// ✅ ربط الضغط على الإشعار بفتح المحادثة
   void _setupNotificationTapHandler() {
     LocalNotificationService.instance.onMessageTap = (
       peerDeviceId,
@@ -207,10 +212,6 @@ class _AppRootState extends State<_AppRoot> {
       return;
     }
 
-    debugPrint(
-      '[AppRoot] Opening chat from notification: $peerDeviceId',
-    );
-
     nav.push(
       MaterialPageRoute(
         builder: (_) => ChatScreen(
@@ -228,6 +229,7 @@ class _AppRootState extends State<_AppRoot> {
   void _onRtcEvent(RtcEvent event) {
     switch (event.type) {
       case RtcEventType.incomingCall:
+        // ✅ Callkit يعرض الواجهة بنفسه
         debugPrint('[AppRoot] Incoming call — Callkit handles UI');
         break;
 
