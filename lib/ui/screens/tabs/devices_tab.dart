@@ -1,15 +1,20 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart' as ph;
 import 'package:provider/provider.dart';
 
 import '../../../core/discovery/device_discovery.dart';
 import '../../../core/discovery/discovered_device.dart';
+import '../../../core/messaging/message_service.dart';
 import '../../../core/services/permission_service.dart';
+import '../../../core/signaling/signaling_service.dart';
+import '../../../data/database/database_helper.dart';
 import '../../theme/app_theme.dart';
+import '../blocked_devices_screen.dart';
 import '../chat_screen.dart';
 
 /// ============================================================
-/// تبويب الأجهزة المتصلة على الشبكة المحلية
+/// تبويب الأجهزة
 /// ============================================================
 class DevicesTab extends StatelessWidget {
   const DevicesTab({super.key});
@@ -18,8 +23,17 @@ class DevicesTab extends StatelessWidget {
   Widget build(BuildContext context) {
     return Consumer<DeviceDiscovery>(
       builder: (context, discovery, _) {
-        final allDevices = discovery.devices;
-        final onlineDevices = discovery.onlineDevices;
+        // ✅ اجلب قائمة المحظورين من MessageService
+        final blockedIds = context.select<MessageService, Set<String>>(
+          (m) => m.blockedDeviceIds,
+        );
+
+        final allDevices = discovery.devices
+            .where((d) => !blockedIds.contains(d.deviceId))
+            .toList();
+
+        final onlineDevices =
+            allDevices.where((d) => d.isOnline).toList();
         final offlineDevices =
             allDevices.where((d) => !d.isOnline).toList();
 
@@ -29,7 +43,7 @@ class DevicesTab extends StatelessWidget {
           );
         }
 
-        if (allDevices.isEmpty) {
+        if (allDevices.isEmpty && blockedIds.isEmpty) {
           return _EmptyDevicesState(
             onRefresh: () => discovery.refreshNow(),
           );
@@ -51,6 +65,9 @@ class DevicesTab extends StatelessWidget {
                 myNumber: discovery.deviceNumber,
               ),
 
+              // ✅ زر "المحظورون" إذا وُجدوا
+              if (blockedIds.isNotEmpty) _buildBlockedBar(context, blockedIds.length),
+
               if (onlineDevices.isNotEmpty) ...[
                 const _SectionHeader(title: 'الأجهزة المتصلة'),
                 ...onlineDevices.map(
@@ -65,7 +82,136 @@ class DevicesTab extends StatelessWidget {
                 ),
               ],
 
+              if (allDevices.isEmpty && blockedIds.isNotEmpty)
+                _buildOnlyBlockedState(),
+
               const SizedBox(height: 60),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // ============================================
+  // === شريط المحظورين ===
+  // ============================================
+
+  Widget _buildBlockedBar(BuildContext context, int count) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => const BlockedDevicesScreen(),
+            ),
+          );
+        },
+        child: Container(
+          margin: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: AppTheme.errorColor.withOpacity(0.08),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: AppTheme.errorColor.withOpacity(0.25),
+            ),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: AppTheme.errorColor.withOpacity(0.15),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.block,
+                  color: AppTheme.errorColor,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      'الأجهزة المحظورة',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: AppTheme.errorColor,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '$count ${count == 1 ? "جهاز" : "أجهزة"} — اضغط للإدارة',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: isDark
+                            ? AppTheme.darkTextSecondary
+                            : AppTheme.lightTextSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(
+                Icons.chevron_left,
+                color: isDark
+                    ? AppTheme.darkTextSecondary
+                    : AppTheme.lightTextSecondary,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildOnlyBlockedState() {
+    return Builder(
+      builder: (context) {
+        final isDark = Theme.of(context).brightness == Brightness.dark;
+
+        return Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            children: [
+              Icon(
+                Icons.visibility_off_outlined,
+                size: 60,
+                color: isDark
+                    ? AppTheme.darkTextSecondary
+                    : AppTheme.lightTextSecondary,
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'كل الأجهزة محظورة',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: isDark
+                      ? AppTheme.darkTextPrimary
+                      : AppTheme.lightTextPrimary,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'ألغِ الحظر للتواصل مع الأجهزة',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: isDark
+                      ? AppTheme.darkTextSecondary
+                      : AppTheme.lightTextSecondary,
+                ),
+              ),
             ],
           ),
         );
@@ -75,7 +221,7 @@ class DevicesTab extends StatelessWidget {
 }
 
 // ============================================================
-// === شريط الحالة (مع رقمي) ===
+// === شريط الحالة ===
 // ============================================================
 class _StatusBar extends StatelessWidget {
   final int online;
@@ -118,7 +264,6 @@ class _StatusBar extends StatelessWidget {
       ),
       child: Row(
         children: [
-          // رقمي (بارز)
           Container(
             width: 64,
             height: 64,
@@ -160,10 +305,7 @@ class _StatusBar extends StatelessWidget {
               ],
             ),
           ),
-
           const SizedBox(width: 14),
-
-          // معلومات إضافية
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -232,7 +374,7 @@ class _SectionHeader extends StatelessWidget {
 }
 
 // ============================================================
-// === صف جهاز (مع الرقم) ===
+// === صف جهاز ===
 // ============================================================
 class _DeviceTile extends StatelessWidget {
   final DiscoveredDevice device;
@@ -251,6 +393,7 @@ class _DeviceTile extends StatelessWidget {
       color: Colors.transparent,
       child: InkWell(
         onTap: isOnline ? () => _openChat(context) : null,
+        onLongPress: () => _showOptions(context),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           child: Container(
@@ -279,7 +422,6 @@ class _DeviceTile extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      // الاسم + الرقم
                       Row(
                         children: [
                           Flexible(
@@ -384,6 +526,9 @@ class _DeviceTile extends StatelessWidget {
     );
   }
 
+  // ============================================
+  // === فتح محادثة ===
+  // ============================================
   void _openChat(BuildContext context) {
     Navigator.of(context).push(
       MaterialPageRoute(
@@ -392,6 +537,165 @@ class _DeviceTile extends StatelessWidget {
     );
   }
 
+  // ============================================
+  // === قائمة الخيارات ===
+  // ============================================
+  void _showOptions(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        decoration: BoxDecoration(
+          color: isDark ? AppTheme.darkSurface : Colors.white,
+          borderRadius: const BorderRadius.vertical(
+            top: Radius.circular(20),
+          ),
+        ),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 12),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade400,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              // عنوان
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.devices,
+                      size: 20,
+                      color: AppTheme.primaryColor,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        device.name,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+
+              // فتح المحادثة
+              if (isOnline)
+                ListTile(
+                  leading: const Icon(Icons.chat_bubble_outline),
+                  title: const Text('فتح المحادثة'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _openChat(context);
+                  },
+                ),
+
+              // ✅ حظر
+              ListTile(
+                leading: const Icon(
+                  Icons.block,
+                  color: AppTheme.errorColor,
+                ),
+                title: const Text(
+                  'حظر الجهاز',
+                  style: TextStyle(color: AppTheme.errorColor),
+                ),
+                subtitle: const Text(
+                  'منع المراسلة والمكالمات من هذا الجهاز',
+                  style: TextStyle(fontSize: 12),
+                ),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _confirmBlock(context);
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirmBlock(BuildContext context) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        icon: const Icon(
+          Icons.block,
+          size: 40,
+          color: AppTheme.errorColor,
+        ),
+        title: const Text('حظر الجهاز'),
+        content: Text(
+          'هل تريد حظر "${device.name}"؟\n\n'
+          'لن تستقبل رسائل أو مكالمات منه.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: AppTheme.errorColor,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('حظر'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    try {
+      await DatabaseHelper.instance.toggleBlock(device.deviceId, true);
+
+      if (!context.mounted) return;
+      await context.read<MessageService>().refreshBlockedDevices();
+      if (!context.mounted) return;
+      await context.read<SignalingService>().refreshBlockedDevices();
+
+      if (!context.mounted) return;
+      HapticFeedback.mediumImpact();
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('تم حظر "${device.name}"'),
+          backgroundColor: AppTheme.successColor,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    } catch (e) {
+      debugPrint('[Devices] block error: $e');
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('تعذّر الحظر'),
+          backgroundColor: AppTheme.errorColor,
+        ),
+      );
+    }
+  }
+
+  // ============================================
+  // === بدء مكالمة ===
+  // ============================================
   Future<void> _callFromTile(
     BuildContext context, {
     required bool isVideo,
