@@ -2,28 +2,19 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <!-- ============================================================ -->
-    <!-- === الأذونات الأساسية للشبكة المحلية (LAN) ===                -->
+    <!-- === الأذونات ===                                              -->
     <!-- ============================================================ -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
-
-    <!-- للحصول على IP الجهاز على شبكة الواي فاي -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-
-    <!-- ============================================================ -->
-    <!-- === اكتشاف الأجهزة على الشبكة (UDP Broadcast + mDNS) ===      -->
-    <!-- ============================================================ -->
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <uses-permission
         android:name="android.permission.NEARBY_WIFI_DEVICES"
         android:usesPermissionFlags="neverForLocation"
         tools:targetApi="tiramisu" />
 
-    <!-- ============================================================ -->
-    <!-- === المكالمات الصوتية والمرئية ===                            -->
-    <!-- ============================================================ -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.CAMERA" />
@@ -32,9 +23,6 @@
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"
         tools:targetApi="s" />
 
-    <!-- ============================================================ -->
-    <!-- === إدارة المكالمات (شاشة فوق القفل) ===                      -->
-    <!-- ============================================================ -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.DISABLE_KEYGUARD" />
@@ -46,20 +34,13 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE"
         tools:targetApi="q" />
 
-    <!-- ============================================================ -->
-    <!-- === الإشعارات ===                                             -->
-    <!-- ============================================================ -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"
         tools:targetApi="tiramisu" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
 
-    <!-- ============================================================ -->
-    <!-- === الملفات والوسائط ===                                      -->
-    <!-- ============================================================ -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"
         tools:targetApi="tiramisu" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"
@@ -68,7 +49,6 @@
         tools:targetApi="tiramisu" />
     <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED"
         tools:targetApi="upside_down_cake" />
-
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
@@ -89,6 +69,32 @@
     <uses-feature
         android:name="android.hardware.wifi"
         android:required="true" />
+
+    <!-- ============================================================ -->
+    <!-- === Queries (Android 11+) — خارج <application> ===             -->
+    <!-- ============================================================ -->
+    <queries>
+        <intent>
+            <action android:name="android.media.action.IMAGE_CAPTURE" />
+        </intent>
+
+        <intent>
+            <action android:name="android.intent.action.GET_CONTENT" />
+        </intent>
+
+        <intent>
+            <action android:name="android.intent.action.OPEN_DOCUMENT" />
+        </intent>
+
+        <intent>
+            <action android:name="android.intent.action.OPEN_DOCUMENT_TREE" />
+        </intent>
+
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" />
+        </intent>
+    </queries>
 
     <!-- ============================================================ -->
     <!-- === التطبيق ===                                              -->
@@ -121,7 +127,6 @@
             android:showWhenLocked="true"
             android:turnScreenOn="true">
 
-            <!-- شاشة البداية (Flutter) -->
             <meta-data
                 android:name="io.flutter.embedding.android.NormalTheme"
                 android:resource="@style/NormalTheme" />
@@ -133,15 +138,14 @@
         </activity>
 
         <!-- ============================================ -->
-        <!-- === إعدادات Flutter Embedding v2 ===         -->
-        <!-- ⚠️ إلزامي: يدل على استخدام النظام الحديث  -->
+        <!-- === Flutter Embedding v2 ===                 -->
         <!-- ============================================ -->
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
 
         <!-- ============================================ -->
-        <!-- === مستقبلات flutter_local_notifications === -->
+        <!-- === مستقبلات الإشعارات ===                    -->
         <!-- ============================================ -->
         <receiver
             android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver"
@@ -162,33 +166,6 @@
             android:name="com.dexterous.flutterlocalnotifications.ActionBroadcastReceiver"
             android:exported="false" />
 
-        <!-- ============================================ -->
-        <!-- === Queries (Android 11+) ===                -->
-        <!-- ============================================ -->
-        <queries>
-            <intent>
-                <action android:name="android.media.action.IMAGE_CAPTURE" />
-            </intent>
-
-            <intent>
-                <action android:name="android.intent.action.GET_CONTENT" />
-            </intent>
-
-            <intent>
-                <action android:name="android.intent.action.OPEN_DOCUMENT" />
-            </intent>
-
-            <intent>
-                <action android:name="android.intent.action.OPEN_DOCUMENT_TREE" />
-            </intent>
-
-            <intent>
-                <action android:name="android.intent.action.VIEW" />
-                <data android:scheme="https" />
-            </intent>
-        </queries>
-
     </application>
 
 </manifest>
-
