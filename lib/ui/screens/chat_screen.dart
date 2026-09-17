@@ -78,6 +78,10 @@ class _ChatScreenState extends State<ChatScreen> {
 
   String? _highlightedMessageId;
 
+  // ✅ حالة التثبيت
+  List<Map<String, dynamic>> _pinnedMessages = [];
+  int _currentPinnedIndex = 0;
+
   late String _conversationId;
 
   // ============================================
@@ -120,6 +124,7 @@ class _ChatScreenState extends State<ChatScreen> {
       _lifecycleService!.setOpenChat(widget.peer.deviceId);
 
       await _loadMessages();
+      await _loadPinnedMessages();
       await _messageService!.markConversationAsRead(widget.peer.deviceId);
 
       if (_highlightedMessageId != null) {
@@ -172,6 +177,26 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  /// تحميل الرسائل المثبتة
+  Future<void> _loadPinnedMessages() async {
+    try {
+      final rows = await DatabaseHelper.instance.getPinnedMessages(
+        _conversationId,
+      );
+      if (!mounted) return;
+      setState(() {
+        _pinnedMessages = rows;
+        if (_pinnedMessages.isEmpty) {
+          _currentPinnedIndex = 0;
+        } else if (_currentPinnedIndex >= _pinnedMessages.length) {
+          _currentPinnedIndex = 0;
+        }
+      });
+    } catch (e) {
+      debugPrint('[Chat] loadPinned error: $e');
+    }
+  }
+
   void _applyFilter() {
     if (_searchQuery.isEmpty) {
       _filteredMessages = _messages;
@@ -199,6 +224,7 @@ class _ChatScreenState extends State<ChatScreen> {
       case MessageEventType.sent:
       case MessageEventType.ack:
         _loadMessages();
+        _loadPinnedMessages();
         if (event.type == MessageEventType.received) {
           _messageService?.markConversationAsRead(widget.peer.deviceId);
         }
@@ -225,7 +251,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void _scrollToMessage(String messageId) {
-    final items = _messages.reversed.toList();
+    final items = _filteredMessages.reversed.toList();
     final index = items.indexWhere((m) => m['message_id'] == messageId);
     if (index == -1) return;
 
@@ -241,6 +267,99 @@ class _ChatScreenState extends State<ChatScreen> {
         curve: Curves.easeOut,
       );
     });
+
+    // ✅ إبراز مؤقت
+    setState(() => _highlightedMessageId = messageId);
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted) setState(() => _highlightedMessageId = null);
+    });
+  }
+
+  // ============================================
+  // === التنقل بين المثبتات ===
+  // ============================================
+
+  void _nextPinnedMessage() {
+    if (_pinnedMessages.isEmpty) return;
+
+    setState(() {
+      _currentPinnedIndex =
+          (_currentPinnedIndex + 1) % _pinnedMessages.length;
+    });
+
+    final messageId = _pinnedMessages[_currentPinnedIndex]['message_id']
+        as String;
+    _scrollToMessage(messageId);
+  }
+
+  void _unpinCurrent() async {
+    if (_pinnedMessages.isEmpty) return;
+
+    final current = _pinnedMessages[_currentPinnedIndex];
+    await _togglePin(current, unpinOnly: true);
+  }
+
+  void _showAllPinned() {
+    if (_pinnedMessages.isEmpty) return;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) => _PinnedMessagesSheet(
+        pinnedMessages: _pinnedMessages,
+        currentIndex: _currentPinnedIndex,
+        onSelect: (index, messageId) {
+          Navigator.pop(ctx);
+          setState(() => _currentPinnedIndex = index);
+          _scrollToMessage(messageId);
+        },
+        onUnpin: (message) {
+          Navigator.pop(ctx);
+          _togglePin(message, unpinOnly: true);
+        },
+      ),
+    );
+  }
+
+  // ============================================
+  // === تثبيت / إلغاء تثبيت ===
+  // ============================================
+
+  Future<void> _togglePin(
+    Map<String, dynamic> message, {
+    bool unpinOnly = false,
+  }) async {
+    try {
+      final messageId = message['message_id'] as String;
+      final isPinned = (message['is_pinned'] as int?) == 1;
+
+      // إذا طُلب إلغاء تثبيت وكان غير مثبّت → لا شيء
+      if (unpinOnly && !isPinned) return;
+
+      final newValue = unpinOnly ? false : !isPinned;
+
+      await DatabaseHelper.instance.toggleMessagePin(
+        messageId,
+        newValue,
+      );
+
+      HapticFeedback.mediumImpact();
+
+      // تحديث القائمة + المثبتات
+      await _loadMessages();
+      await _loadPinnedMessages();
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(newValue ? 'تم تثبيت الرسالة' : 'تم إلغاء التثبيت'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    } catch (e) {
+      debugPrint('[Chat] togglePin error: $e');
+    }
   }
 
   // ============================================
@@ -270,7 +389,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   // ============================================
-  // === قائمة خيارات الرسالة (جديد) ===
+  // === قائمة خيارات الرسالة ===
   // ============================================
 
   void _showMessageOptions(Map<String, dynamic> message) {
@@ -282,6 +401,7 @@ class _ChatScreenState extends State<ChatScreen> {
     final isText = type == AppConstants.mediaText;
     final body = message['body'] as String? ?? '';
     final hasText = body.isNotEmpty;
+    final isPinned = (message['is_pinned'] as int?) == 1;
 
     showModalBottomSheet(
       context: context,
@@ -299,7 +419,6 @@ class _ChatScreenState extends State<ChatScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // مؤشر السحب
               Container(
                 width: 40,
                 height: 4,
@@ -308,6 +427,17 @@ class _ChatScreenState extends State<ChatScreen> {
                   color: Colors.grey.shade400,
                   borderRadius: BorderRadius.circular(2),
                 ),
+              ),
+
+              // ✅ تثبيت / إلغاء تثبيت (جديد - أول عنصر)
+              _OptionItem(
+                icon: isPinned ? Icons.push_pin : Icons.push_pin_outlined,
+                label: isPinned ? 'إلغاء التثبيت' : 'تثبيت',
+                color: isPinned ? AppTheme.primaryColor : null,
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _togglePin(message);
+                },
               ),
 
               // الرد
@@ -388,7 +518,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
     if (!mounted || result == null) return;
 
-    // عرض النتيجة
     final String text;
     final Color color;
 
@@ -469,6 +598,7 @@ class _ChatScreenState extends State<ChatScreen> {
       await DatabaseHelper.instance.deleteMessage(messageId);
       HapticFeedback.mediumImpact();
       await _loadMessages();
+      await _loadPinnedMessages();
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -953,6 +1083,12 @@ class _ChatScreenState extends State<ChatScreen> {
           : _buildNormalAppBar(isDark, peerOnline),
       body: Column(
         children: [
+          // ✅ شريط الرسائل المثبتة (يظهر عند وجود مثبتات وليس بحث)
+          if (_pinnedMessages.isNotEmpty &&
+              !_isSearching &&
+              _replyToMessage == null)
+            _buildPinnedBar(isDark),
+
           Expanded(
             child: Container(
               decoration: BoxDecoration(
@@ -981,6 +1117,155 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
     );
   }
+
+  // ============================================
+  // === شريط المثبتات (جديد) ===
+  // ============================================
+
+  Widget _buildPinnedBar(bool isDark) {
+    if (_pinnedMessages.isEmpty) return const SizedBox.shrink();
+
+    final current = _pinnedMessages[_currentPinnedIndex];
+    final preview = _pinnedPreviewText(current);
+    final senderName = (current['is_outgoing'] == 1)
+        ? 'أنت'
+        : widget.peer.name;
+    final total = _pinnedMessages.length;
+    final position = _currentPinnedIndex + 1;
+
+    return Material(
+      color: AppTheme.primaryColor.withOpacity(isDark ? 0.15 : 0.08),
+      child: InkWell(
+        onTap: _nextPinnedMessage,
+        onLongPress: _showAllPinned,
+        child: Container(
+          padding: const EdgeInsets.symmetric(
+            horizontal: 12,
+            vertical: 10,
+          ),
+          decoration: BoxDecoration(
+            border: Border(
+              right: BorderSide(
+                color: AppTheme.primaryColor,
+                width: 3,
+              ),
+              bottom: BorderSide(
+                color: isDark
+                    ? AppTheme.darkDivider
+                    : AppTheme.lightDivider,
+                width: 0.5,
+              ),
+            ),
+          ),
+          child: Row(
+            children: [
+              const Icon(
+                Icons.push_pin,
+                size: 18,
+                color: AppTheme.primaryColor,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        Text(
+                          'رسالة مثبتة',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: AppTheme.primaryColor,
+                          ),
+                        ),
+                        if (total > 1) ...[
+                          const SizedBox(width: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 1,
+                            ),
+                            decoration: BoxDecoration(
+                              color: AppTheme.primaryColor
+                                  .withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              '$position/$total',
+                              style: const TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                                color: AppTheme.primaryColor,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      '$senderName: $preview',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: isDark
+                            ? AppTheme.darkTextPrimary
+                            : AppTheme.lightTextPrimary,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              // زر إلغاء التثبيت
+              Material(
+                color: Colors.transparent,
+                shape: const CircleBorder(),
+                child: InkWell(
+                  customBorder: const CircleBorder(),
+                  onTap: _unpinCurrent,
+                  child: Padding(
+                    padding: const EdgeInsets.all(6),
+                    child: Icon(
+                      Icons.close,
+                      size: 18,
+                      color: isDark
+                          ? AppTheme.darkTextSecondary
+                          : AppTheme.lightTextSecondary,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _pinnedPreviewText(Map<String, dynamic> message) {
+    final type = message['type'] as String?;
+    switch (type) {
+      case AppConstants.mediaText:
+        return (message['body'] as String?) ?? '';
+      case AppConstants.mediaImage:
+        return '📷 صورة';
+      case AppConstants.mediaVideo:
+        return '🎥 فيديو';
+      case AppConstants.mediaAudio:
+        return '🎵 مقطع صوتي';
+      case AppConstants.mediaFile:
+        return '📎 ${message['file_name'] ?? 'ملف'}';
+      default:
+        return 'رسالة';
+    }
+  }
+
+  // ============================================
+  // === AppBar العادي ===
+  // ============================================
 
   PreferredSizeWidget _buildNormalAppBar(bool isDark, bool peerOnline) {
     return AppBar(
@@ -1349,6 +1634,7 @@ class _ChatScreenState extends State<ChatScreen> {
         final prev = index > 0 ? items[index - 1] : null;
         final showDate = _searchQuery.isEmpty && _shouldShowDate(msg, prev);
         final isHighlighted = _highlightedMessageId == msg['message_id'];
+        final isPinned = (msg['is_pinned'] as int?) == 1;
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1366,6 +1652,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 message: msg,
                 isDark: isDark,
                 searchQuery: _searchQuery,
+                isPinned: isPinned,
                 onReply: () => _startReply(msg),
                 onLongPress: () => _showMessageOptions(msg),
                 onOpenImage: _openImage,
@@ -1642,6 +1929,290 @@ class _ChatScreenState extends State<ChatScreen> {
 }
 
 // ============================================================
+// === قائمة كل المثبتات (Bottom Sheet) ===
+// ============================================================
+class _PinnedMessagesSheet extends StatelessWidget {
+  final List<Map<String, dynamic>> pinnedMessages;
+  final int currentIndex;
+  final void Function(int index, String messageId) onSelect;
+  final void Function(Map<String, dynamic> message) onUnpin;
+
+  const _PinnedMessagesSheet({
+    required this.pinnedMessages,
+    required this.currentIndex,
+    required this.onSelect,
+    required this.onUnpin,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final maxHeight = MediaQuery.of(context).size.height * 0.7;
+
+    return Container(
+      constraints: BoxConstraints(maxHeight: maxHeight),
+      decoration: BoxDecoration(
+        color: isDark ? AppTheme.darkSurface : Colors.white,
+        borderRadius: const BorderRadius.vertical(
+          top: Radius.circular(24),
+        ),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // مؤشر السحب
+          Container(
+            width: 40,
+            height: 4,
+            margin: const EdgeInsets.only(top: 12, bottom: 12),
+            decoration: BoxDecoration(
+              color: Colors.grey.shade400,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+
+          // العنوان
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.push_pin,
+                  size: 20,
+                  color: AppTheme.primaryColor,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  'الرسائل المثبتة (${pinnedMessages.length})',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+
+          // القائمة
+          Flexible(
+            child: ListView.separated(
+              padding: const EdgeInsets.only(bottom: 16),
+              itemCount: pinnedMessages.length,
+              separatorBuilder: (_, __) => Divider(
+                height: 1,
+                indent: 16,
+                endIndent: 16,
+                color: isDark
+                    ? AppTheme.darkDivider
+                    : AppTheme.lightDivider,
+              ),
+              itemBuilder: (context, index) {
+                final message = pinnedMessages[index];
+                final isCurrent = index == currentIndex;
+
+                return _PinnedMessageTile(
+                  message: message,
+                  index: index,
+                  isCurrent: isCurrent,
+                  isDark: isDark,
+                  onTap: () => onSelect(
+                    index,
+                    message['message_id'] as String,
+                  ),
+                  onUnpin: () => onUnpin(message),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PinnedMessageTile extends StatelessWidget {
+  final Map<String, dynamic> message;
+  final int index;
+  final bool isCurrent;
+  final bool isDark;
+  final VoidCallback onTap;
+  final VoidCallback onUnpin;
+
+  const _PinnedMessageTile({
+    required this.message,
+    required this.index,
+    required this.isCurrent,
+    required this.isDark,
+    required this.onTap,
+    required this.onUnpin,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final type = message['type'] as String?;
+    final body = message['body'] as String? ?? '';
+    final fileName = message['file_name'] as String?;
+    final createdAt = message['created_at'] as int;
+    final isOutgoing = (message['is_outgoing'] as int?) == 1;
+
+    return Material(
+      color: isCurrent
+          ? AppTheme.primaryColor.withOpacity(0.08)
+          : Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 12,
+          ),
+          child: Row(
+            children: [
+              // رقم
+              Container(
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                  color: AppTheme.primaryColor.withOpacity(0.15),
+                  shape: BoxShape.circle,
+                ),
+                alignment: Alignment.center,
+                child: Text(
+                  '${index + 1}',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: AppTheme.primaryColor,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+
+              // المحتوى
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          _iconForType(type),
+                          size: 12,
+                          color: isDark
+                              ? AppTheme.darkTextSecondary
+                              : AppTheme.lightTextSecondary,
+                        ),
+                        const SizedBox(width: 5),
+                        Text(
+                          isOutgoing ? 'أنت' : 'الطرف الآخر',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: isDark
+                                ? AppTheme.darkTextSecondary
+                                : AppTheme.lightTextSecondary,
+                          ),
+                        ),
+                        const Spacer(),
+                        Text(
+                          _formatTime(createdAt),
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: isDark
+                                ? AppTheme.darkTextSecondary
+                                : AppTheme.lightTextSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      type == AppConstants.mediaText
+                          ? body
+                          : (fileName ?? _mediaLabel(type)),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: isDark
+                            ? AppTheme.darkTextPrimary
+                            : AppTheme.lightTextPrimary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              // زر إلغاء التثبيت
+              Material(
+                color: Colors.transparent,
+                shape: const CircleBorder(),
+                child: InkWell(
+                  customBorder: const CircleBorder(),
+                  onTap: onUnpin,
+                  child: Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: Icon(
+                      Icons.push_pin,
+                      size: 18,
+                      color: AppTheme.primaryColor.withOpacity(0.6),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  IconData _iconForType(String? type) {
+    switch (type) {
+      case AppConstants.mediaImage:
+        return Icons.image_outlined;
+      case AppConstants.mediaVideo:
+        return Icons.videocam_outlined;
+      case AppConstants.mediaAudio:
+        return Icons.mic_none;
+      case AppConstants.mediaFile:
+        return Icons.insert_drive_file_outlined;
+      default:
+        return Icons.chat_bubble_outline;
+    }
+  }
+
+  String _mediaLabel(String? type) {
+    switch (type) {
+      case AppConstants.mediaImage:
+        return 'صورة';
+      case AppConstants.mediaVideo:
+        return 'فيديو';
+      case AppConstants.mediaAudio:
+        return 'مقطع صوتي';
+      case AppConstants.mediaFile:
+        return 'ملف';
+      default:
+        return 'مرفق';
+    }
+  }
+
+  String _formatTime(int timestamp) {
+    final d = DateTime.fromMillisecondsSinceEpoch(timestamp);
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final target = DateTime(d.year, d.month, d.day);
+    final diff = today.difference(target).inDays;
+
+    if (diff == 0) return 'اليوم';
+    if (diff == 1) return 'أمس';
+    if (diff < 7) return 'منذ $diff أيام';
+    return DateFormat('d/M/yyyy', 'ar').format(d);
+  }
+}
+
+// ============================================================
 // === عناصر مساعدة ===
 // ============================================================
 
@@ -1812,6 +2383,7 @@ class _MessageBubble extends StatelessWidget {
   final Map<String, dynamic> message;
   final bool isDark;
   final String searchQuery;
+  final bool isPinned;
   final VoidCallback onReply;
   final VoidCallback onLongPress;
   final void Function(String) onOpenImage;
@@ -1823,6 +2395,7 @@ class _MessageBubble extends StatelessWidget {
     required this.message,
     required this.isDark,
     required this.searchQuery,
+    required this.isPinned,
     required this.onReply,
     required this.onLongPress,
     required this.onOpenImage,
@@ -1873,11 +2446,48 @@ class _MessageBubble extends StatelessWidget {
                   offset: const Offset(0, 1),
                 ),
               ],
+              // ✅ إطار للرسائل المثبتة
+              border: isPinned
+                  ? Border.all(
+                      color: AppTheme.primaryColor.withOpacity(0.5),
+                      width: 1.5,
+                    )
+                  : null,
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // ✅ شارة التثبيت
+                if (isPinned)
+                  Padding(
+                    padding: const EdgeInsets.only(
+                      top: 6,
+                      left: 10,
+                      right: 10,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.push_pin,
+                          size: 12,
+                          color: AppTheme.primaryColor.withOpacity(0.8),
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          'مثبتة',
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                            color: AppTheme.primaryColor.withOpacity(0.8),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
                 _buildContent(context, isDark),
+
                 if (transfers.containsKey(messageId))
                   Padding(
                     padding: const EdgeInsets.symmetric(
