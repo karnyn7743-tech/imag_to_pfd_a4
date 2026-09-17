@@ -22,6 +22,7 @@ dependencies:
   # ============================================
   cupertino_icons: ^1.0.8
   flutter_callkit_incoming: ^3.1.5
+  background_permission_checker: ^1.0.1
   
   # ============================================
   # === إدارة الحالة (State Management) ===
