@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
+import 'package:open_filex/open_filex.dart';
 import 'package:permission_handler/permission_handler.dart' as ph;
 import 'package:provider/provider.dart';
 
@@ -18,6 +19,7 @@ import '../theme/app_theme.dart';
 import '../widgets/permission_dialog.dart';
 import 'audio_call_screen.dart';
 import 'video_call_screen.dart';
+import 'video_player_screen.dart';
 
 /// ============================================================
 /// شاشة المحادثة
@@ -190,6 +192,56 @@ class _ChatScreenState extends State<ChatScreen> {
       _replyToId = null;
       _replyToMessage = null;
     });
+  }
+
+  // ============================================
+  // === فتح الوسائط ===
+  // ============================================
+
+  /// فتح صورة بملء الشاشة
+  void _openImage(String filePath) {
+    Navigator.of(context).push(
+      PageRouteBuilder(
+        opaque: false,
+        barrierColor: Colors.black87,
+        pageBuilder: (_, __, ___) => _ImageViewerScreen(filePath: filePath),
+        transitionsBuilder: (_, animation, __, child) {
+          return FadeTransition(opacity: animation, child: child);
+        },
+      ),
+    );
+  }
+
+  /// تشغيل فيديو بملء الشاشة
+  void _openVideo(String filePath, {String? title}) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => VideoPlayerScreen(
+          videoPath: filePath,
+          title: title,
+        ),
+      ),
+    );
+  }
+
+  /// فتح ملف بتطبيق النظام
+  Future<void> _openFile(String filePath) async {
+    try {
+      final file = File(filePath);
+      if (!await file.exists()) {
+        if (!mounted) return;
+        _showError('الملف غير موجود');
+        return;
+      }
+
+      final result = await OpenFilex.open(filePath);
+      if (result.type != ResultType.done && mounted) {
+        _showError('لا يوجد تطبيق لفتح هذا الملف');
+      }
+    } catch (e) {
+      debugPrint('[Chat] openFile error: $e');
+      if (mounted) _showError('تعذّر فتح الملف');
+    }
   }
 
   // ============================================
@@ -369,9 +421,6 @@ class _ChatScreenState extends State<ChatScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // ============================================
-                  // === الاسم + رقم الاتصال ===
-                  // ============================================
                   Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -441,7 +490,7 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
           PopupMenuButton<String>(
             onSelected: (v) {
-              // TODO: تنفيذ الخيارات لاحقًا
+              // TODO: خيارات إضافية
             },
             itemBuilder: (_) => const [
               PopupMenuItem(
@@ -546,6 +595,9 @@ class _ChatScreenState extends State<ChatScreen> {
               message: msg,
               isDark: isDark,
               onReply: () => _startReply(msg),
+              onOpenImage: _openImage,
+              onOpenVideo: _openVideo,
+              onOpenFile: _openFile,
               transfers: _messageService?.transfers ?? const {},
             ),
           ],
@@ -929,12 +981,18 @@ class _MessageBubble extends StatelessWidget {
   final Map<String, dynamic> message;
   final bool isDark;
   final VoidCallback onReply;
+  final void Function(String) onOpenImage;
+  final void Function(String, {String? title}) onOpenVideo;
+  final Future<void> Function(String) onOpenFile;
   final Map<String, double> transfers;
 
   const _MessageBubble({
     required this.message,
     required this.isDark,
     required this.onReply,
+    required this.onOpenImage,
+    required this.onOpenVideo,
+    required this.onOpenFile,
     required this.transfers,
   });
 
@@ -953,7 +1011,7 @@ class _MessageBubble extends StatelessWidget {
           onLongPress: onReply,
           child: Container(
             constraints: BoxConstraints(
-              maxWidth: MediaQuery.of(context).size.width * 0.75,
+              maxWidth: MediaQuery.of(context).size.width * 0.78,
             ),
             decoration: BoxDecoration(
               color: isOutgoing
@@ -1042,28 +1100,21 @@ class _MessageBubble extends StatelessWidget {
 
   Widget _buildContent(BuildContext context, bool isDark) {
     final type = message['type'] as String?;
+    final filePath = message['file_path'] as String?;
 
     switch (type) {
       case AppConstants.mediaImage:
-        return _buildImagePreview();
+        return _buildImagePreview(filePath);
 
       case AppConstants.mediaVideo:
-        return _buildPlaceholderPreview(
-          icon: Icons.play_circle_outline,
-          label: 'فيديو',
-          color: Colors.red,
-        );
+        return _buildVideoPreview(filePath);
 
       case AppConstants.mediaAudio:
-        return _buildPlaceholderPreview(
-          icon: Icons.play_arrow_rounded,
-          label: 'مقطع صوتي',
-          color: Colors.purple,
-        );
+        return _buildAudioPreview(filePath);
 
       case AppConstants.mediaFile:
         final fileName = message['file_name'] as String? ?? 'ملف';
-        return _buildFilePreview(fileName);
+        return _buildFilePreview(filePath, fileName);
 
       case AppConstants.mediaText:
       default:
@@ -1087,34 +1138,220 @@ class _MessageBubble extends StatelessWidget {
     }
   }
 
-  Widget _buildImagePreview() {
-    final filePath = message['file_path'] as String?;
-
+  // ============================================
+  // === معاينة الصورة (قابلة للضغط) ===
+  // ============================================
+  Widget _buildImagePreview(String? filePath) {
     if (filePath == null || !File(filePath).existsSync()) {
       return _buildPlaceholderPreview(
         icon: Icons.broken_image_outlined,
-        label: 'صورة',
+        label: 'صورة غير متوفرة',
         color: Colors.grey,
       );
     }
 
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(10),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(
-          maxWidth: 260,
-          maxHeight: 320,
-          minWidth: 140,
-          minHeight: 100,
-        ),
-        child: Image.file(
-          File(filePath),
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => _buildPlaceholderPreview(
-            icon: Icons.broken_image_outlined,
-            label: 'تعذّر فتح الصورة',
-            color: Colors.grey,
+    return GestureDetector(
+      onTap: () => onOpenImage(filePath),
+      child: Hero(
+        tag: 'image_$filePath',
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(10),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(
+              maxWidth: 260,
+              maxHeight: 320,
+              minWidth: 140,
+              minHeight: 100,
+            ),
+            child: Image.file(
+              File(filePath),
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => _buildPlaceholderPreview(
+                icon: Icons.broken_image_outlined,
+                label: 'تعذّر فتح الصورة',
+                color: Colors.grey,
+              ),
+            ),
           ),
+        ),
+      ),
+    );
+  }
+
+  // ============================================
+  // === معاينة الفيديو (قابلة للضغط) ===
+  // ============================================
+  Widget _buildVideoPreview(String? filePath) {
+    final exists = filePath != null && File(filePath).existsSync();
+
+    return GestureDetector(
+      onTap: exists ? () => onOpenVideo(filePath) : null,
+      child: Container(
+        width: 240,
+        height: 160,
+        margin: const EdgeInsets.all(4),
+        decoration: BoxDecoration(
+          color: Colors.black.withOpacity(0.85),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            // أيقونة الفيديو في الخلفية
+            Icon(
+              Icons.movie_outlined,
+              size: 60,
+              color: Colors.white.withOpacity(0.15),
+            ),
+
+            // زر التشغيل
+            Container(
+              width: 56,
+              height: 56,
+              decoration: BoxDecoration(
+                color: exists
+                    ? Colors.white.withOpacity(0.95)
+                    : Colors.white.withOpacity(0.3),
+                shape: BoxShape.circle,
+                boxShadow: exists
+                    ? [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.4),
+                          blurRadius: 12,
+                          offset: const Offset(0, 4),
+                        ),
+                      ]
+                    : null,
+              ),
+              child: Icon(
+                Icons.play_arrow_rounded,
+                size: 38,
+                color: exists
+                    ? AppTheme.primaryColor
+                    : Colors.white.withOpacity(0.5),
+              ),
+            ),
+
+            // التسمية السفلية
+            Positioned(
+              bottom: 8,
+              left: 8,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 8,
+                  vertical: 3,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(0.6),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.videocam,
+                      size: 12,
+                      color: Colors.white,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      exists ? 'فيديو' : 'غير متوفر',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        color: Colors.white,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ============================================
+  // === معاينة المقطع الصوتي ===
+  // ============================================
+  Widget _buildAudioPreview(String? filePath) {
+    return _buildPlaceholderPreview(
+      icon: Icons.play_arrow_rounded,
+      label: 'مقطع صوتي',
+      color: Colors.purple,
+    );
+  }
+
+  // ============================================
+  // === معاينة الملف (قابلة للضغط) ===
+  // ============================================
+  Widget _buildFilePreview(String? filePath, String fileName) {
+    final ext = fileName.contains('.')
+        ? fileName.split('.').last.toUpperCase()
+        : 'FILE';
+    final exists = filePath != null && File(filePath).existsSync();
+
+    // لون حسب نوع الملف
+    Color iconColor = AppTheme.primaryColor;
+    if (['PDF'].contains(ext)) iconColor = Colors.red;
+    if (['DOC', 'DOCX'].contains(ext)) iconColor = Colors.blue;
+    if (['XLS', 'XLSX'].contains(ext)) iconColor = Colors.green;
+    if (['ZIP', 'RAR'].contains(ext)) iconColor = Colors.orange;
+
+    return GestureDetector(
+      onTap: exists ? () => onOpenFile(filePath) : null,
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: iconColor.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              alignment: Alignment.center,
+              child: Text(
+                ext.length > 4 ? ext.substring(0, 4) : ext,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                  color: iconColor,
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Flexible(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    fileName,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    exists ? 'اضغط للفتح' : 'غير متوفر',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: exists
+                          ? Colors.grey.shade600
+                          : AppTheme.errorColor,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -1151,84 +1388,14 @@ class _MessageBubble extends StatelessWidget {
     );
   }
 
-  Widget _buildFilePreview(String fileName) {
-    final ext = fileName.contains('.')
-        ? fileName.split('.').last.toUpperCase()
-        : 'FILE';
-
-    return Padding(
-      padding: const EdgeInsets.all(10),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: AppTheme.primaryColor.withOpacity(0.15),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            alignment: Alignment.center,
-            child: Text(
-              ext.length > 4 ? ext.substring(0, 4) : ext,
-              style: const TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.bold,
-                color: AppTheme.primaryColor,
-              ),
-            ),
-          ),
-          const SizedBox(width: 10),
-          Flexible(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  fileName,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  'اضغط للفتح',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: Colors.grey.shade600,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _statusIcon(String? status) {
     switch (status) {
       case 'pending':
-        return const Icon(
-          Icons.schedule,
-          size: 14,
-          color: Colors.grey,
-        );
+        return const Icon(Icons.schedule, size: 14, color: Colors.grey);
       case 'sent':
-        return const Icon(
-          Icons.check,
-          size: 15,
-          color: Colors.grey,
-        );
+        return const Icon(Icons.check, size: 15, color: Colors.grey);
       case 'delivered':
-        return const Icon(
-          Icons.done_all,
-          size: 15,
-          color: Colors.grey,
-        );
+        return const Icon(Icons.done_all, size: 15, color: Colors.grey);
       case 'read':
         return const Icon(
           Icons.done_all,
@@ -1250,5 +1417,69 @@ class _MessageBubble extends StatelessWidget {
     final h = d.hour.toString().padLeft(2, '0');
     final m = d.minute.toString().padLeft(2, '0');
     return '$h:$m';
+  }
+}
+
+// ============================================================
+// === شاشة عرض الصورة بملء الشاشة ===
+// ============================================================
+class _ImageViewerScreen extends StatelessWidget {
+  final String filePath;
+
+  const _ImageViewerScreen({required this.filePath});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: GestureDetector(
+        onTap: () => Navigator.of(context).pop(),
+        child: Stack(
+          children: [
+            // الصورة
+            Positioned.fill(
+              child: InteractiveViewer(
+                minScale: 1.0,
+                maxScale: 5.0,
+                child: Center(
+                  child: Hero(
+                    tag: 'image_$filePath',
+                    child: Image.file(
+                      File(filePath),
+                      fit: BoxFit.contain,
+                      errorBuilder: (_, __, ___) => const Center(
+                        child: Icon(
+                          Icons.broken_image_outlined,
+                          color: Colors.white54,
+                          size: 64,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
+            // زر الإغلاق
+            Positioned(
+              top: 16,
+              right: 16,
+              child: SafeArea(
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.5),
+                    shape: BoxShape.circle,
+                  ),
+                  child: IconButton(
+                    icon: const Icon(Icons.close, color: Colors.white),
+                    onPressed: () => Navigator.of(context).pop(),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
