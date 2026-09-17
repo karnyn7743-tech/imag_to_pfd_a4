@@ -10,22 +10,22 @@ import 'package:uuid/uuid.dart';
 import '../../data/database/database_helper.dart';
 import '../constants.dart';
 import '../discovery/device_discovery.dart';
+import '../services/app_lifecycle_service.dart';
+import '../services/local_notification_service.dart';
 import '../signaling/signaling_service.dart';
 
 /// ============================================================
 /// خدمة الرسائل والوسائط
-/// ------------------------------------------------
-/// تُرسل الرسائل عبر SignalingService (WebSocket)
-/// وتُخزّن محليًا في قاعدة البيانات
 /// ============================================================
 class MessageService extends ChangeNotifier {
   MessageService();
 
   // ============================================
-  // === المراجع الخارجية ===
+  // === المراجع ===
   // ============================================
   DeviceDiscovery? _discovery;
   SignalingService? _signaling;
+  AppLifecycleService? _lifecycle;
   StreamSubscription<SignalingMessage>? _msgSub;
 
   void attach(DeviceDiscovery discovery, SignalingService signaling) {
@@ -36,22 +36,25 @@ class MessageService extends ChangeNotifier {
     _msgSub = _signaling!.messages.listen(_onSignalingMessage);
   }
 
+  /// ✅ ربط خدمة دورة الحياة
+  void attachLifecycle(AppLifecycleService lifecycle) {
+    _lifecycle = lifecycle;
+  }
+
   // ============================================
-  // === Stream للإشعارات ===
+  // === Stream ===
   // ============================================
   final StreamController<MessageEvent> _eventController =
       StreamController<MessageEvent>.broadcast();
   Stream<MessageEvent> get events => _eventController.stream;
 
-  /// تحميلات وسائط جارية: messageId → progress (0.0 - 1.0)
   final Map<String, double> _transfers = {};
   Map<String, double> get transfers => Map.unmodifiable(_transfers);
 
   // ============================================
-  // === إرسال الرسائل ===
+  // === إرسال ===
   // ============================================
 
-  /// إرسال رسالة نصية
   Future<MessageResult> sendText({
     required String peerDeviceId,
     required String body,
@@ -81,11 +84,9 @@ class MessageService extends ChangeNotifier {
       'created_at': now.millisecondsSinceEpoch,
     };
 
-    // 1) حفظ في DB كـ pending
     await DatabaseHelper.instance.insertMessage(message);
     await _updateConversationLastMessage(message);
 
-    // 2) إرسال عبر Signaling
     final sent = await _signaling?.sendTo(peerDeviceId, {
       'type': AppConstants.msgTextMessage,
       'msgId': messageId,
@@ -95,7 +96,6 @@ class MessageService extends ChangeNotifier {
     }) ??
         false;
 
-    // 3) تحديث الحالة
     final newStatus = sent ? 'sent' : 'failed';
     await DatabaseHelper.instance.updateMessageStatus(messageId, newStatus);
 
@@ -111,7 +111,6 @@ class MessageService extends ChangeNotifier {
         : MessageResult.failure('فشل الإرسال');
   }
 
-  /// إرسال ملف وسائط (صورة/فيديو/صوت/ملف)
   Future<MessageResult> sendMedia({
     required String peerDeviceId,
     required String filePath,
@@ -154,7 +153,6 @@ class MessageService extends ChangeNotifier {
     await DatabaseHelper.instance.insertMessage(message);
     await _updateConversationLastMessage(message);
 
-    // إرسال الإشعار الأولي
     await _signaling?.sendTo(peerDeviceId, {
       'type': AppConstants.msgTextMessage,
       'msgId': messageId,
@@ -166,7 +164,6 @@ class MessageService extends ChangeNotifier {
       'replyToId': replyToId,
     });
 
-    // إرسال محتوى الملف على شكل قطع
     final ok = await _sendFileInChunks(
       peerDeviceId: peerDeviceId,
       messageId: messageId,
@@ -185,7 +182,6 @@ class MessageService extends ChangeNotifier {
         : MessageResult.failure('فشل إرسال الملف');
   }
 
-  /// إرسال ملف على شكل قطع
   Future<bool> _sendFileInChunks({
     required String peerDeviceId,
     required String messageId,
@@ -239,10 +235,9 @@ class MessageService extends ChangeNotifier {
   }
 
   // ============================================
-  // === استقبال الرسائل ===
+  // === استقبال ===
   // ============================================
 
-  /// تخزين مؤقت للوسائط الواردة: messageId → بيانات
   final Map<String, _IncomingMedia> _incomingMedia = {};
 
   Future<void> _onSignalingMessage(SignalingMessage msg) async {
@@ -250,11 +245,9 @@ class MessageService extends ChangeNotifier {
       case AppConstants.msgTextMessage:
         await _handleIncomingMessage(msg);
         break;
-
       case 'MEDIA_CHUNK':
         await _handleIncomingChunk(msg);
         break;
-
       case AppConstants.msgMessageAck:
         await _handleAck(msg);
         break;
@@ -269,7 +262,7 @@ class MessageService extends ChangeNotifier {
 
     final conversationId = _conversationId(msg.from);
 
-    // إذا كانت رسالة نصية → احفظ فورًا
+    // رسالة نصية → احفظ فورًا
     if (msgType == AppConstants.mediaText) {
       final body = msg.payload['body'] as String? ?? '';
 
@@ -291,7 +284,6 @@ class MessageService extends ChangeNotifier {
       await _updateConversationLastMessage(message);
       await DatabaseHelper.instance.incrementUnread(conversationId);
 
-      // إرسال إيصال استلام
       await _sendAck(msg.from, msgId, 'delivered');
 
       notifyListeners();
@@ -300,10 +292,17 @@ class MessageService extends ChangeNotifier {
         messageId: msgId,
         peerDeviceId: msg.from,
       ));
+
+      // ✅ أطلق إشعارًا للرسالة النصية
+      await _maybeNotify(
+        peerDeviceId: msg.from,
+        messageId: msgId,
+        body: body,
+      );
       return;
     }
 
-    // وسائط: نحضّر التخزين وننتظر القطع
+    // وسائط → انتظر القطع
     _incomingMedia[msgId] = _IncomingMedia(
       messageId: msgId,
       from: msg.from,
@@ -315,8 +314,6 @@ class MessageService extends ChangeNotifier {
       replyToId: msg.payload['replyToId'] as String?,
       createdAt: msg.receivedAt.millisecondsSinceEpoch,
     );
-
-    debugPrint('[Messages] Preparing to receive media: $msgId');
   }
 
   Future<void> _handleIncomingChunk(SignalingMessage msg) async {
@@ -324,10 +321,7 @@ class MessageService extends ChangeNotifier {
     if (msgId == null) return;
 
     final media = _incomingMedia[msgId];
-    if (media == null) {
-      debugPrint('[Messages] Unexpected chunk for $msgId');
-      return;
-    }
+    if (media == null) return;
 
     try {
       final data = base64Decode(msg.payload['data'] as String);
@@ -348,7 +342,6 @@ class MessageService extends ChangeNotifier {
 
   Future<void> _finalizeIncomingMedia(_IncomingMedia media) async {
     try {
-      // احفظ الملف في مجلد التطبيق
       final dir = await getApplicationDocumentsDirectory();
       final mediaDir = Directory(p.join(dir.path, 'media'));
       if (!await mediaDir.exists()) {
@@ -396,14 +389,73 @@ class MessageService extends ChangeNotifier {
         peerDeviceId: media.from,
       ));
 
-      debugPrint('[Messages] Media saved: $filePath');
+      // ✅ أطلق إشعارًا للوسائط
+      await _maybeNotify(
+        peerDeviceId: media.from,
+        messageId: media.messageId,
+        body: _mediaDescription(media.type, media.caption),
+      );
     } catch (e) {
       debugPrint('[Messages] finalize error: $e');
     }
   }
 
   // ============================================
-  // === إيصالات ===
+  // === إطلاق الإشعارات (جديد) ===
+  // ============================================
+
+  /// أطلق إشعارًا إذا كانت الشروط مناسبة
+  Future<void> _maybeNotify({
+    required String peerDeviceId,
+    required String messageId,
+    required String body,
+  }) async {
+    try {
+      // 1) إذا التطبيق في المقدمة والمحادثة مفتوحة → لا إشعار
+      if (_lifecycle != null &&
+          _lifecycle!.isInForeground &&
+          _lifecycle!.isChatOpen(peerDeviceId)) {
+        debugPrint('[Messages] Skipping notification (chat open)');
+        return;
+      }
+
+      // 2) احصل على معلومات الجهاز
+      final peer = _discovery?.getDevice(peerDeviceId);
+      if (peer == null) {
+        debugPrint('[Messages] Peer not found for notification');
+        return;
+      }
+
+      // 3) اعرض الإشعار
+      await LocalNotificationService.instance.showMessageNotification(
+        peerDeviceId: peerDeviceId,
+        peerName: peer.name,
+        peerNumber: peer.number,
+        body: body,
+        messageId: messageId,
+        conversationId: _conversationId(peerDeviceId),
+      );
+    } catch (e) {
+      debugPrint('[Messages] notify error: $e');
+    }
+  }
+
+  String _mediaDescription(String type, String? caption) {
+    final typeLabel = switch (type) {
+      AppConstants.mediaImage => '📷 صورة',
+      AppConstants.mediaVideo => '🎥 فيديو',
+      AppConstants.mediaAudio => '🎵 مقطع صوتي',
+      AppConstants.mediaFile => '📎 ملف',
+      _ => 'مرفق',
+    };
+    if (caption != null && caption.isNotEmpty) {
+      return '$typeLabel: $caption';
+    }
+    return typeLabel;
+  }
+
+  // ============================================
+  // === ACK ===
   // ============================================
 
   Future<void> _sendAck(
@@ -443,11 +495,9 @@ class MessageService extends ChangeNotifier {
     ));
   }
 
-  /// إرسال إيصال "قُرِئت" عند فتح المحادثة
   Future<void> markConversationAsRead(String peerDeviceId) async {
     final conversationId = _conversationId(peerDeviceId);
 
-    // اجلب كل الرسائل الواردة غير المقروءة
     final messages = await DatabaseHelper.instance.getMessages(
       conversationId: conversationId,
     );
@@ -470,17 +520,21 @@ class MessageService extends ChangeNotifier {
     }
 
     await DatabaseHelper.instance.resetUnread(conversationId);
+
+    // ✅ ألغِ إشعار هذه المحادثة
+    await LocalNotificationService.instance
+        .cancelForDevice(peerDeviceId);
+
     notifyListeners();
   }
 
   // ============================================
-  // === أدوات مساعدة ===
+  // === أدوات ===
   // ============================================
 
   String _conversationId(String peerDeviceId) {
     final a = _discovery?.deviceId ?? '';
     final b = peerDeviceId;
-    // نرتبهم أبجديًا لضمان نفس المعرّف من الجهتين
     final sorted = [a, b]..sort();
     return '${sorted[0]}__${sorted[1]}';
   }
@@ -496,7 +550,6 @@ class MessageService extends ChangeNotifier {
     final preview = _previewText(message);
     final ts = message['created_at'] as int;
 
-    // أنشئ المحادثة إن لم تكن موجودة
     final existing =
         await DatabaseHelper.instance.getConversation(conversationId);
     if (existing == null) {
@@ -574,7 +627,7 @@ class MessageService extends ChangeNotifier {
 }
 
 // ============================================================
-// === نماذج داخلية ===
+// === نماذج ===
 // ============================================================
 
 class _IncomingMedia {
