@@ -29,6 +29,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String _localIp = '';
   bool _vibrationEnabled = true;
   bool _soundEnabled = true;
+  bool _batteryOptimizationDisabled = false;
 
   @override
   void initState() {
@@ -40,12 +41,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
     try {
       final discovery = context.read<DeviceDiscovery>();
 
+      // ✅ فحص حالة تعطيل تحسين البطارية
+      final batteryStatus =
+          await ph.Permission.ignoreBatteryOptimizations.status;
+
       if (!mounted) return;
       setState(() {
         _deviceName = discovery.deviceName;
         _deviceId = discovery.deviceId;
         _deviceNumber = discovery.deviceNumber;
         _localIp = discovery.localIp;
+        _batteryOptimizationDisabled = batteryStatus.isGranted;
         _isLoading = false;
       });
     } catch (e) {
@@ -196,13 +202,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   // ============================================
-  // === المظهر (عبر ThemeProvider) ===
+  // === المظهر ===
   // ============================================
 
   Future<void> _setThemeMode(String mode) async {
     final themeProvider = context.read<ThemeProvider>();
     await themeProvider.setThemeMode(mode);
-    // لا حاجة لإعادة البناء — ThemeProvider يُشعر كل التطبيق
   }
 
   // ============================================
@@ -211,7 +216,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _toggleVibration(bool value) async {
     setState(() => _vibrationEnabled = value);
-    // ملاحظة: تُحفظ في Prefs عند الحاجة
   }
 
   Future<void> _toggleSound(bool value) async {
@@ -232,6 +236,221 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
     if (!mounted) return;
     if (granted) _showSnack('الإشعارات مفعّلة', isSuccess: true);
+  }
+
+  // ============================================
+  // === تعطيل تحسين البطارية (جديد) ===
+  // ============================================
+
+  Future<void> _requestIgnoreBatteryOptimizations() async {
+    try {
+      // 1) هل الإذن ممنوح بالفعل؟
+      final status = await ph.Permission.ignoreBatteryOptimizations.status;
+
+      if (status.isGranted) {
+        if (!mounted) return;
+        setState(() => _batteryOptimizationDisabled = true);
+        _showSnack('الاستثناء مفعّل بالفعل', isSuccess: true);
+        return;
+      }
+
+      // 2) اشرح للمستخدم قبل الطلب
+      if (!mounted) return;
+      final proceed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          icon: const Icon(
+            Icons.battery_charging_full_outlined,
+            size: 40,
+            color: AppTheme.primaryColor,
+          ),
+          title: const Text('تعطيل تحسين البطارية'),
+          content: const Text(
+            'لتتمكن من استقبال المكالمات والرسائل عندما يكون '
+            'التطبيق مغلقًا أو الشاشة مقفلة، يجب السماح له بالعمل '
+            'في الخلفية دون قيود.\n\n'
+            'سيُفتح الآن إعداد النظام لتفعيل هذا الاستثناء.',
+            style: TextStyle(height: 1.5),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('لاحقًا'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('متابعة'),
+            ),
+          ],
+        ),
+      );
+
+      if (proceed != true || !mounted) return;
+
+      // 3) اطلب الإذن
+      final result = await ph.Permission.ignoreBatteryOptimizations.request();
+
+      if (!mounted) return;
+
+      if (result.isGranted) {
+        setState(() => _batteryOptimizationDisabled = true);
+        _showSnack('تم تعطيل تحسين البطارية', isSuccess: true);
+      } else {
+        _showSnack('لم يتم تفعيل الاستثناء');
+      }
+    } catch (e) {
+      debugPrint('[Settings] battery optimization error: $e');
+      if (!mounted) return;
+      _showSnack('تعذّر طلب الإذن');
+    }
+  }
+
+  // ============================================
+  // === دليل الأجهزة الصينية (جديد) ===
+  // ============================================
+
+  Future<void> _showChineseDeviceHelp() async {
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.help_outline, color: AppTheme.primaryColor),
+            SizedBox(width: 8),
+            Text('إعدادات موثوقية إضافية'),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'على بعض الأجهزة (خاصة الصينية منها مثل Xiaomi، '
+                'Huawei، Oppo، Vivo)، قد تحتاج لتمكين بعض الإعدادات '
+                'يدويًا لضمان عمل المكالمات في الخلفية.',
+                style: TextStyle(height: 1.5),
+              ),
+              const SizedBox(height: 16),
+              _deviceHelpItem(
+                title: 'Xiaomi / Redmi / POCO (MIUI)',
+                steps: [
+                  'الإعدادات ← التطبيقات ← إدارة التطبيقات ← LanPhone',
+                  'تمكين "التشغيل التلقائي"',
+                  'من "الأذونات الأخرى": تمكين "العرض على شاشة القفل"',
+                  'من "البطارية": اختيار "بدون قيود"',
+                ],
+              ),
+              _deviceHelpItem(
+                title: 'Huawei / Honor (EMUI)',
+                steps: [
+                  'الإعدادات ← البطارية ← تشغيل التطبيق',
+                  'اختيار LanPhone ← "إدارة يدوية"',
+                  'تمكين: التشغيل التلقائي، التشغيل الثانوي، '
+                      'العمل في الخلفية',
+                ],
+              ),
+              _deviceHelpItem(
+                title: 'Oppo / Realme (ColorOS)',
+                steps: [
+                  'الإعدادات ← البطارية ← استهلاك الطاقة في الخلفية',
+                  'اختيار LanPhone ← "السماح بالعمل في الخلفية"',
+                  'تفعيل "التشغيل التلقائي" في مدير بدء التشغيل',
+                ],
+              ),
+              _deviceHelpItem(
+                title: 'Vivo / iQOO (Funtouch OS)',
+                steps: [
+                  'الإعدادات ← البطارية ← استهلاك الطاقة في الخلفية',
+                  'اختيار LanPhone ← "السماح"',
+                  'تفعيل "التشغيل التلقائي" من iManager',
+                ],
+              ),
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppTheme.primaryColor.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(
+                      Icons.info_outline,
+                      size: 18,
+                      color: AppTheme.primaryColor,
+                    ),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'بعد تمكين هذه الإعدادات، أعد تشغيل التطبيق.',
+                        style: TextStyle(fontSize: 12),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('فهمت'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await ph.openAppSettings();
+            },
+            child: const Text('فتح إعدادات التطبيق'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _deviceHelpItem({
+    required String title,
+    required List<String> steps,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: 13,
+              color: AppTheme.primaryColor,
+            ),
+          ),
+          const SizedBox(height: 6),
+          ...steps.map(
+            (s) => Padding(
+              padding: const EdgeInsets.only(right: 8, bottom: 3),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('• ', style: TextStyle(fontSize: 13)),
+                  Expanded(
+                    child: Text(
+                      s,
+                      style: const TextStyle(
+                        fontSize: 12.5,
+                        height: 1.4,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   // ============================================
@@ -330,6 +549,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 _buildThemeSection(),
                 const _SectionTitle(title: 'الإشعارات والأصوات'),
                 _buildNotificationsSection(),
+                const _SectionTitle(title: 'الموثوقية في الخلفية'),
+                _buildReliabilitySection(),
                 const _SectionTitle(title: 'معلومات الشبكة'),
                 _buildNetworkSection(),
                 const _SectionTitle(title: 'البيانات'),
@@ -448,7 +669,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   // ============================================
-  // === قسم الرقم ===
+  // === رقم الاتصال ===
   // ============================================
 
   Widget _buildNumberSection() {
@@ -499,11 +720,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   // ============================================
-  // === المظهر (مع ThemeProvider) ===
+  // === المظهر ===
   // ============================================
 
   Widget _buildThemeSection() {
-    // ✅ راقب ThemeProvider للتحديث الفوري
     final currentMode = context.watch<ThemeProvider>().themeModeString;
 
     return _SettingsCard(
@@ -570,6 +790,55 @@ class _SettingsScreenState extends State<SettingsScreen> {
           title: const Text('إدارة الإشعارات'),
           trailing: const Icon(Icons.chevron_left),
           onTap: _manageNotifications,
+        ),
+      ],
+    );
+  }
+
+  // ============================================
+  // === الموثوقية في الخلفية (جديد) ===
+  // ============================================
+
+  Widget _buildReliabilitySection() {
+    return _SettingsCard(
+      children: [
+        // تعطيل تحسين البطارية
+        ListTile(
+          leading: Icon(
+            _batteryOptimizationDisabled
+                ? Icons.battery_full
+                : Icons.battery_alert_outlined,
+            color: _batteryOptimizationDisabled
+                ? AppTheme.successColor
+                : AppTheme.warningColor,
+          ),
+          title: const Text('تعطيل تحسين البطارية'),
+          subtitle: Text(
+            _batteryOptimizationDisabled
+                ? '✅ مفعّل — التطبيق يعمل بدون قيود'
+                : '⚠️ مطلوب لاستقبال المكالمات في الخلفية',
+            style: TextStyle(
+              color: _batteryOptimizationDisabled
+                  ? AppTheme.successColor
+                  : AppTheme.warningColor,
+            ),
+          ),
+          trailing: const Icon(Icons.chevron_left),
+          onTap: _requestIgnoreBatteryOptimizations,
+        ),
+
+        // دليل الأجهزة الصينية
+        ListTile(
+          leading: const Icon(
+            Icons.phone_android_outlined,
+            color: AppTheme.primaryColor,
+          ),
+          title: const Text('إعدادات موثوقية إضافية'),
+          subtitle: const Text(
+            'دليل خاص بأجهزة Xiaomi، Huawei، Oppo، Vivo',
+          ),
+          trailing: const Icon(Icons.chevron_left),
+          onTap: _showChineseDeviceHelp,
         ),
       ],
     );
