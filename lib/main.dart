@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 
@@ -10,11 +11,14 @@ import 'core/discovery/device_discovery.dart';
 import 'core/messaging/message_service.dart';
 import 'core/providers/theme_provider.dart';
 import 'core/rtc/rtc_service.dart';
+import 'core/services/notification_service.dart';
 import 'core/services/permission_service.dart';
 import 'core/signaling/signaling_service.dart';
 import 'data/database/database_helper.dart';
+import 'ui/screens/audio_call_screen.dart';
 import 'ui/screens/incoming_call_screen.dart';
 import 'ui/screens/splash_screen.dart';
+import 'ui/screens/video_call_screen.dart';
 import 'ui/theme/app_theme.dart';
 
 // ============================================================
@@ -32,18 +36,26 @@ Future<void> main() async {
     DeviceOrientation.portraitUp,
   ]);
 
-  // 1) تهيئة قاعدة البيانات
+  // 1) قاعدة البيانات
   try {
     await DatabaseHelper.instance.init();
   } catch (e) {
     debugPrint('[main] Database init error: $e');
   }
 
-  // 2) طلب الأذونات الأساسية
+  // 2) الأذونات الأساسية
   try {
     await PermissionService.requestEssentialAtStartup();
   } catch (e) {
     debugPrint('[main] Permission request error: $e');
+  }
+
+  // 3) تهيئة Callkit
+  try {
+    await FlutterCallkitIncoming.setCallkitIncomingAppName('LanPhone');
+    debugPrint('[main] Callkit initialized');
+  } catch (e) {
+    debugPrint('[main] Callkit init error: $e');
   }
 
   runApp(const LanPhoneApp());
@@ -59,23 +71,22 @@ class LanPhoneApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
-        // ==========================================
-        // === 1) مزوّد الثيم (يبدأ أولًا) ===
-        // ==========================================
+        // 1) مزوّد الثيم
         ChangeNotifierProvider<ThemeProvider>(
           create: (_) => ThemeProvider(),
         ),
 
-        // ==========================================
-        // === 2) خدمة اكتشاف الأجهزة ===
-        // ==========================================
+        // 2) خدمة الإشعارات (Callkit)
+        ChangeNotifierProvider<NotificationService>(
+          create: (_) => NotificationService(),
+        ),
+
+        // 3) خدمة اكتشاف الأجهزة
         ChangeNotifierProvider<DeviceDiscovery>(
           create: (_) => DeviceDiscovery()..start(),
         ),
 
-        // ==========================================
-        // === 3) خدمة التحكم (Signaling) ===
-        // ==========================================
+        // 4) خدمة التحكم
         ChangeNotifierProxyProvider<DeviceDiscovery, SignalingService>(
           create: (_) => SignalingService()..start(),
           update: (_, discovery, signaling) {
@@ -84,20 +95,18 @@ class LanPhoneApp extends StatelessWidget {
           },
         ),
 
-        // ==========================================
-        // === 4) خدمة WebRTC ===
-        // ==========================================
-        ChangeNotifierProxyProvider<SignalingService, RtcService>(
+        // 5) خدمة WebRTC (يحتاج Signaling + Notification)
+        ChangeNotifierProxyProvider2<SignalingService, NotificationService,
+            RtcService>(
           create: (_) => RtcService(),
-          update: (_, signaling, rtc) {
+          update: (_, signaling, notification, rtc) {
             rtc?.attachSignaling(signaling);
+            rtc?.attachNotification(notification);
             return rtc ?? RtcService();
           },
         ),
 
-        // ==========================================
-        // === 5) خدمة الرسائل والوسائط ===
-        // ==========================================
+        // 6) خدمة الرسائل
         ChangeNotifierProxyProvider2<DeviceDiscovery, SignalingService,
             MessageService>(
           create: (_) => MessageService(),
@@ -125,14 +134,15 @@ class _AppRoot extends StatefulWidget {
 class _AppRootState extends State<_AppRoot> {
   StreamSubscription<RtcEvent>? _rtcSub;
   RtcService? _rtc;
-  bool _incomingScreenOpen = false;
+  DeviceDiscovery? _discovery;
+  bool _callScreenOpen = false;
 
   @override
   void initState() {
     super.initState();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _setupRtcListener();
+      _setupListeners();
     });
   }
 
@@ -143,52 +153,68 @@ class _AppRootState extends State<_AppRoot> {
   }
 
   // ============================================
-  // === مستمع أحداث WebRTC ===
+  // === الإعداد ===
   // ============================================
 
-  void _setupRtcListener() {
+  void _setupListeners() {
     if (!mounted) return;
     _rtc = context.read<RtcService>();
+    _discovery = context.read<DeviceDiscovery>();
     _rtcSub = _rtc!.events.listen(_onRtcEvent);
   }
 
   void _onRtcEvent(RtcEvent event) {
     switch (event.type) {
       case RtcEventType.incomingCall:
-        _openIncomingCallScreen(event);
+        // ✅ لا نفتح شاشة Flutter — Callkit يعرض الواجهة تلقائيًا
+        debugPrint('[AppRoot] Incoming call — Callkit is handling it');
         break;
+
+      case RtcEventType.callAccepted:
+        // ✅ المستخدم قبل المكالمة → افتح شاشة المكالمة
+        _openCallScreen(event);
+        break;
+
       case RtcEventType.callEnded:
-        _incomingScreenOpen = false;
+        _callScreenOpen = false;
         break;
+
       default:
         break;
     }
   }
 
-  void _openIncomingCallScreen(RtcEvent event) {
-    if (_incomingScreenOpen) return;
+  // ============================================
+  // === فتح شاشة المكالمة بعد القبول ===
+  // ============================================
+
+  void _openCallScreen(RtcEvent event) {
+    if (_callScreenOpen) return;
 
     final nav = navigatorKey.currentState;
     if (nav == null) {
-      debugPrint('[AppRoot] Navigator not ready — ignoring incoming call');
+      debugPrint('[AppRoot] Navigator not ready');
       return;
     }
 
-    _incomingScreenOpen = true;
+    final peer = _discovery?.getDevice(event.peerDeviceId);
+    if (peer == null) {
+      debugPrint('[AppRoot] Peer not found: ${event.peerDeviceId}');
+      return;
+    }
+
+    _callScreenOpen = true;
+
+    final Widget screen = event.callType == AppConstants.callTypeVideo
+        ? VideoCallScreen(peer: peer, isCaller: false)
+        : AudioCallScreen(peer: peer, isCaller: false);
 
     nav
         .push(
-      MaterialPageRoute(
-        builder: (_) => IncomingCallScreen(
-          callId: event.callId,
-          peerDeviceId: event.peerDeviceId,
-          peerName: event.peerName,
-          callType: event.callType,
-        ),
-      ),
+      MaterialPageRoute(builder: (_) => screen),
     )
         .then((_) {
-      _incomingScreenOpen = false;
+      _callScreenOpen = false;
     });
   }
 
@@ -198,25 +224,15 @@ class _AppRootState extends State<_AppRoot> {
 
   @override
   Widget build(BuildContext context) {
-    // ✅ استمع لتغيّر الثيم
     final themeMode = context.watch<ThemeProvider>().themeMode;
 
     return MaterialApp(
       title: AppConstants.appName,
       debugShowCheckedModeBanner: false,
-
       navigatorKey: navigatorKey,
-
-      // ==========================================
-      // === الثيم (فوري) ===
-      // ==========================================
       theme: AppTheme.light,
       darkTheme: AppTheme.dark,
-      themeMode: themeMode, // ← ديناميكي من ThemeProvider
-
-      // ==========================================
-      // === اللغة والتوطين ===
-      // ==========================================
+      themeMode: themeMode,
       locale: const Locale('ar'),
       supportedLocales: const [
         Locale('ar'),
@@ -227,10 +243,6 @@ class _AppRootState extends State<_AppRoot> {
         GlobalWidgetsLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,
       ],
-
-      // ==========================================
-      // === نقطة البداية ===
-      // ==========================================
       home: const SplashScreen(),
     );
   }
