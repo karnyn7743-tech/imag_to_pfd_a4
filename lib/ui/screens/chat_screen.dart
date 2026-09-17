@@ -14,6 +14,7 @@ import '../../core/constants.dart';
 import '../../core/discovery/device_discovery.dart';
 import '../../core/discovery/discovered_device.dart';
 import '../../core/messaging/message_service.dart';
+import '../../core/services/app_lifecycle_service.dart';
 import '../../core/services/audio_recorder_service.dart';
 import '../../data/database/database_helper.dart';
 import '../theme/app_theme.dart';
@@ -50,11 +51,12 @@ class _ChatScreenState extends State<ChatScreen> {
   final ScrollController _scrollController = ScrollController();
   final FocusNode _inputFocus = FocusNode();
 
-  // ✅ للبحث
+  // للبحث
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocus = FocusNode();
 
   MessageService? _messageService;
+  AppLifecycleService? _lifecycleService; // ✅ جديد
   StreamSubscription<MessageEvent>? _eventSub;
 
   // ============================================
@@ -68,17 +70,17 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _canSend = false;
   bool _isSendingMedia = false;
 
-  // ✅ حالة البحث
+  // حالة البحث
   bool _isSearching = false;
   String _searchQuery = '';
 
-  // ✅ حالة التسجيل
+  // حالة التسجيل
   bool _isRecording = false;
   int _recordingSeconds = 0;
   Timer? _recordingTimer;
   final List<double> _waveform = [];
 
-  // ✅ معرّف الرسالة المُبرزة (من إشعار)
+  // معرّف الرسالة المُبرزة
   String? _highlightedMessageId;
 
   late String _conversationId;
@@ -100,7 +102,7 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     });
 
-    // ✅ مستمع البحث
+    // مستمع البحث
     _searchController.addListener(() {
       final q = _searchController.text.trim();
       if (q != _searchQuery) {
@@ -113,6 +115,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       _messageService = context.read<MessageService>();
+      _lifecycleService = context.read<AppLifecycleService>();
+
       final discovery = context.read<DeviceDiscovery>();
       _conversationId = _buildConversationId(
         discovery.deviceId,
@@ -120,13 +124,17 @@ class _ChatScreenState extends State<ChatScreen> {
       );
 
       _eventSub = _messageService!.events.listen(_onMessageEvent);
+
+      // ✅ أعلم خدمة دورة الحياة أن المحادثة مفتوحة
+      // (لمنع إظهار إشعارات لهذه المحادثة أثناء عرضها)
+      _lifecycleService!.setOpenChat(widget.peer.deviceId);
+
       await _loadMessages();
       await _messageService!.markConversationAsRead(widget.peer.deviceId);
 
-      // ✅ إذا كانت هناك رسالة مُبرزة، مرّر إليها
+      // إذا كانت هناك رسالة مُبرزة، مرّر إليها
       if (_highlightedMessageId != null) {
         _scrollToMessage(_highlightedMessageId!);
-        // ألغِ الإبراز بعد 3 ثوان
         Future.delayed(const Duration(seconds: 3), () {
           if (mounted) setState(() => _highlightedMessageId = null);
         });
@@ -136,6 +144,9 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    // ✅ نظّف حالة المحادثة المفتوحة
+    _lifecycleService?.clearOpenChat();
+
     _eventSub?.cancel();
     _recordingTimer?.cancel();
     AudioRecorderService.instance.cancel();
@@ -174,7 +185,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  /// ✅ فلترة الرسائل حسب كلمة البحث
+  /// فلترة الرسائل حسب كلمة البحث
   void _applyFilter() {
     if (_searchQuery.isEmpty) {
       _filteredMessages = _messages;
@@ -184,12 +195,10 @@ class _ChatScreenState extends State<ChatScreen> {
     final q = _searchQuery.toLowerCase();
     _filteredMessages = _messages.where((m) {
       final type = m['type'] as String?;
-      // ابحث في الرسائل النصية فقط
       if (type == AppConstants.mediaText) {
         final body = (m['body'] as String?)?.toLowerCase() ?? '';
         return body.contains(q);
       }
-      // ابحث أيضًا في أسماء الملفات
       if (type == AppConstants.mediaFile) {
         final fileName = (m['file_name'] as String?)?.toLowerCase() ?? '';
         return fileName.contains(q);
@@ -231,16 +240,14 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
-  /// ✅ تمرير إلى رسالة محددة
+  /// تمرير إلى رسالة محددة
   void _scrollToMessage(String messageId) {
     final items = _messages.reversed.toList();
     final index = items.indexWhere((m) => m['message_id'] == messageId);
     if (index == -1) return;
 
-    // نحتاج وقتًا حتى تُبنى القائمة
     Future.delayed(const Duration(milliseconds: 300), () {
       if (!_scrollController.hasClients) return;
-      // تقديري: 80 بكسل لكل رسالة (تقدير تقريبي)
       final targetOffset = (index * 80.0).clamp(
         0.0,
         _scrollController.position.maxScrollExtent,
@@ -760,7 +767,6 @@ class _ChatScreenState extends State<ChatScreen> {
         ],
       ),
       actions: [
-        // ✅ زر البحث
         IconButton(
           icon: const Icon(Icons.search),
           tooltip: 'بحث',
@@ -826,7 +832,6 @@ class _ChatScreenState extends State<ChatScreen> {
         ),
       ),
       actions: [
-        // عداد النتائج
         if (_searchQuery.isNotEmpty)
           Center(
             child: Padding(
@@ -841,7 +846,6 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
             ),
           ),
-        // زر مسح النص
         if (_searchQuery.isNotEmpty)
           IconButton(
             icon: const Icon(Icons.close),
@@ -1097,14 +1101,12 @@ class _ChatScreenState extends State<ChatScreen> {
         final msg = items[index];
         final prev = index > 0 ? items[index - 1] : null;
         final showDate = _searchQuery.isEmpty && _shouldShowDate(msg, prev);
-        final isHighlighted =
-            _highlightedMessageId == msg['message_id'];
+        final isHighlighted = _highlightedMessageId == msg['message_id'];
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             if (showDate) _buildDateDivider(msg['created_at'] as int, isDark),
-            // ✅ إبراز الرسالة المُبرزة
             AnimatedContainer(
               duration: const Duration(milliseconds: 300),
               decoration: isHighlighted
@@ -1543,7 +1545,7 @@ class _Avatar extends StatelessWidget {
 }
 
 // ============================================================
-// === فقاعة الرسالة (مع دعم إبراز نص البحث) ===
+// === فقاعة الرسالة ===
 // ============================================================
 class _MessageBubble extends StatelessWidget {
   final Map<String, dynamic> message;
@@ -1718,7 +1720,7 @@ class _MessageBubble extends StatelessWidget {
     }
   }
 
-  /// ✅ نص مع إبراز كلمة البحث
+  /// نص مع إبراز كلمة البحث
   Widget _buildHighlightedText(String text, {required bool isDark}) {
     final baseStyle = TextStyle(
       fontSize: 15,
@@ -1728,12 +1730,10 @@ class _MessageBubble extends StatelessWidget {
           : AppTheme.lightTextPrimary,
     );
 
-    // إذا لم يكن هناك بحث → النص العادي
     if (searchQuery.isEmpty) {
       return Text(text, style: baseStyle);
     }
 
-    // ابحث عن كل التطابقات
     final lowerText = text.toLowerCase();
     final lowerQuery = searchQuery.toLowerCase();
     final spans = <TextSpan>[];
@@ -1742,19 +1742,16 @@ class _MessageBubble extends StatelessWidget {
     while (true) {
       final index = lowerText.indexOf(lowerQuery, start);
       if (index == -1) {
-        // أضف البقية
         if (start < text.length) {
           spans.add(TextSpan(text: text.substring(start)));
         }
         break;
       }
 
-      // أضف ما قبل التطابق
       if (index > start) {
         spans.add(TextSpan(text: text.substring(start, index)));
       }
 
-      // أضف التطابق مع إبراز
       spans.add(
         TextSpan(
           text: text.substring(index, index + searchQuery.length),
