@@ -334,10 +334,9 @@ class DatabaseHelper {
   }
 
   // ============================================
-  // === إدارة المحادثات: تثبيت / أرشفة (جديد) ===
+  // === إدارة المحادثات: تثبيت / أرشفة ===
   // ============================================
 
-  /// المحادثات غير المؤرشفة فقط
   Future<List<Map<String, dynamic>>> getVisibleConversations() async {
     return db.query(
       tableConversations,
@@ -346,7 +345,6 @@ class DatabaseHelper {
     );
   }
 
-  /// المحادثات المؤرشفة فقط
   Future<List<Map<String, dynamic>>> getArchivedConversations() async {
     return db.query(
       tableConversations,
@@ -355,7 +353,6 @@ class DatabaseHelper {
     );
   }
 
-  /// عدد المحادثات المؤرشفة
   Future<int> getArchivedCount() async {
     final result = await db.rawQuery(
       'SELECT COUNT(*) as count FROM $tableConversations '
@@ -364,7 +361,6 @@ class DatabaseHelper {
     return (result.first['count'] as int?) ?? 0;
   }
 
-  /// تفعيل/إلغاء التثبيت
   Future<int> togglePin(String conversationId, bool isPinned) async {
     return db.update(
       tableConversations,
@@ -374,7 +370,6 @@ class DatabaseHelper {
     );
   }
 
-  /// تفعيل/إلغاء الأرشفة
   Future<int> toggleArchive(String conversationId, bool isArchived) async {
     return db.update(
       tableConversations,
@@ -384,7 +379,6 @@ class DatabaseHelper {
     );
   }
 
-  /// هل هذه المحادثة مثبّتة؟
   Future<bool> isPinned(String conversationId) async {
     final result = await db.query(
       tableConversations,
@@ -397,7 +391,6 @@ class DatabaseHelper {
     return (result.first['is_pinned'] as int?) == 1;
   }
 
-  /// هل هذه المحادثة مؤرشفة؟
   Future<bool> isArchived(String conversationId) async {
     final result = await db.query(
       tableConversations,
@@ -408,6 +401,61 @@ class DatabaseHelper {
     );
     if (result.isEmpty) return false;
     return (result.first['is_archived'] as int?) == 1;
+  }
+
+  // ============================================
+  // === حظر الأجهزة ===
+  // ============================================
+
+  /// تفعيل/إلغاء الحظر
+  Future<int> toggleBlock(String deviceId, bool isBlocked) async {
+    return db.update(
+      tableDevices,
+      {'is_blocked': isBlocked ? 1 : 0},
+      where: 'device_id = ?',
+      whereArgs: [deviceId],
+    );
+  }
+
+  /// هل هذا الجهاز محظور؟
+  Future<bool> isDeviceBlocked(String deviceId) async {
+    final result = await db.query(
+      tableDevices,
+      columns: ['is_blocked'],
+      where: 'device_id = ?',
+      whereArgs: [deviceId],
+      limit: 1,
+    );
+    if (result.isEmpty) return false;
+    return (result.first['is_blocked'] as int?) == 1;
+  }
+
+  /// كل الأجهزة المحظورة
+  Future<List<Map<String, dynamic>>> getBlockedDevices() async {
+    return db.query(
+      tableDevices,
+      where: 'is_blocked = 1',
+      orderBy: 'name ASC',
+    );
+  }
+
+  /// عدد الأجهزة المحظورة
+  Future<int> getBlockedCount() async {
+    final result = await db.rawQuery(
+      'SELECT COUNT(*) as count FROM $tableDevices '
+      'WHERE is_blocked = 1',
+    );
+    return (result.first['count'] as int?) ?? 0;
+  }
+
+  /// كل معرّفات الأجهزة المحظورة (للفحص السريع)
+  Future<Set<String>> getBlockedDeviceIds() async {
+    final rows = await db.query(
+      tableDevices,
+      columns: ['device_id'],
+      where: 'is_blocked = 1',
+    );
+    return rows.map((r) => r['device_id'] as String).toSet();
   }
 
   // ============================================
