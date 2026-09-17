@@ -12,6 +12,7 @@ import '../../../data/database/database_helper.dart';
 import '../../theme/app_theme.dart';
 import '../blocked_devices_screen.dart';
 import '../chat_screen.dart';
+import '../device_info_screen.dart';
 
 /// ============================================================
 /// تبويب الأجهزة
@@ -23,7 +24,7 @@ class DevicesTab extends StatelessWidget {
   Widget build(BuildContext context) {
     return Consumer<DeviceDiscovery>(
       builder: (context, discovery, _) {
-        // ✅ اجلب قائمة المحظورين من MessageService
+        // اجلب قائمة المحظورين من MessageService
         final blockedIds = context.select<MessageService, Set<String>>(
           (m) => m.blockedDeviceIds,
         );
@@ -65,8 +66,8 @@ class DevicesTab extends StatelessWidget {
                 myNumber: discovery.deviceNumber,
               ),
 
-              // ✅ زر "المحظورون" إذا وُجدوا
-              if (blockedIds.isNotEmpty) _buildBlockedBar(context, blockedIds.length),
+              if (blockedIds.isNotEmpty)
+                _buildBlockedBar(context, blockedIds.length),
 
               if (onlineDevices.isNotEmpty) ...[
                 const _SectionHeader(title: 'الأجهزة المتصلة'),
@@ -526,9 +527,6 @@ class _DeviceTile extends StatelessWidget {
     );
   }
 
-  // ============================================
-  // === فتح محادثة ===
-  // ============================================
   void _openChat(BuildContext context) {
     Navigator.of(context).push(
       MaterialPageRoute(
@@ -573,7 +571,7 @@ class _DeviceTile extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(horizontal: 20),
                 child: Row(
                   children: [
-                    Icon(
+                    const Icon(
                       Icons.devices,
                       size: 20,
                       color: AppTheme.primaryColor,
@@ -594,6 +592,20 @@ class _DeviceTile extends StatelessWidget {
               ),
               const SizedBox(height: 12),
 
+              // ✅ عرض معلومات الجهاز
+              ListTile(
+                leading: const Icon(Icons.info_outline),
+                title: const Text('معلومات الجهاز'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => DeviceInfoScreen(device: device),
+                    ),
+                  );
+                },
+              ),
+
               // فتح المحادثة
               if (isOnline)
                 ListTile(
@@ -605,7 +617,7 @@ class _DeviceTile extends StatelessWidget {
                   },
                 ),
 
-              // ✅ حظر
+              // حظر
               ListTile(
                 leading: const Icon(
                   Icons.block,
@@ -693,9 +705,6 @@ class _DeviceTile extends StatelessWidget {
     }
   }
 
-  // ============================================
-  // === بدء مكالمة ===
-  // ============================================
   Future<void> _callFromTile(
     BuildContext context, {
     required bool isVideo,
