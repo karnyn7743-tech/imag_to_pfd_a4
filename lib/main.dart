@@ -8,15 +8,18 @@ import 'package:provider/provider.dart';
 
 import 'core/constants.dart';
 import 'core/discovery/device_discovery.dart';
+import 'core/discovery/discovered_device.dart';
 import 'core/messaging/message_service.dart';
 import 'core/providers/theme_provider.dart';
 import 'core/rtc/rtc_service.dart';
+import 'core/services/app_lifecycle_service.dart';
+import 'core/services/local_notification_service.dart';
 import 'core/services/notification_service.dart';
 import 'core/services/permission_service.dart';
 import 'core/signaling/signaling_service.dart';
 import 'data/database/database_helper.dart';
 import 'ui/screens/audio_call_screen.dart';
-import 'ui/screens/incoming_call_screen.dart';
+import 'ui/screens/chat_screen.dart';
 import 'ui/screens/splash_screen.dart';
 import 'ui/screens/video_call_screen.dart';
 import 'ui/theme/app_theme.dart';
@@ -43,14 +46,22 @@ Future<void> main() async {
     debugPrint('[main] Database init error: $e');
   }
 
-  // 2) الأذونات الأساسية
+  // 2) الإشعارات المحلية
+  try {
+    await LocalNotificationService.instance.init();
+    debugPrint('[main] Local notifications initialized');
+  } catch (e) {
+    debugPrint('[main] Local notifications init error: $e');
+  }
+
+  // 3) الأذونات
   try {
     await PermissionService.requestEssentialAtStartup();
   } catch (e) {
     debugPrint('[main] Permission request error: $e');
   }
 
-  // 3) تهيئة Callkit
+  // 4) Callkit
   try {
     await FlutterCallkitIncoming.setCallkitIncomingAppName('LanPhone');
     debugPrint('[main] Callkit initialized');
@@ -76,17 +87,22 @@ class LanPhoneApp extends StatelessWidget {
           create: (_) => ThemeProvider(),
         ),
 
-        // 2) خدمة الإشعارات (Callkit)
+        // 2) دورة حياة التطبيق (جديد)
+        ChangeNotifierProvider<AppLifecycleService>(
+          create: (_) => AppLifecycleService(),
+        ),
+
+        // 3) خدمة إشعارات Callkit
         ChangeNotifierProvider<NotificationService>(
           create: (_) => NotificationService(),
         ),
 
-        // 3) خدمة اكتشاف الأجهزة
+        // 4) اكتشاف الأجهزة
         ChangeNotifierProvider<DeviceDiscovery>(
           create: (_) => DeviceDiscovery()..start(),
         ),
 
-        // 4) خدمة التحكم
+        // 5) Signaling
         ChangeNotifierProxyProvider<DeviceDiscovery, SignalingService>(
           create: (_) => SignalingService()..start(),
           update: (_, discovery, signaling) {
@@ -95,7 +111,7 @@ class LanPhoneApp extends StatelessWidget {
           },
         ),
 
-        // 5) خدمة WebRTC (يحتاج Signaling + Notification)
+        // 6) RTC
         ChangeNotifierProxyProvider2<SignalingService, NotificationService,
             RtcService>(
           create: (_) => RtcService(),
@@ -106,12 +122,16 @@ class LanPhoneApp extends StatelessWidget {
           },
         ),
 
-        // 6) خدمة الرسائل
-        ChangeNotifierProxyProvider2<DeviceDiscovery, SignalingService,
+        // 7) الرسائل + الإشعارات + دورة الحياة
+        ChangeNotifierProxyProvider3<
+            DeviceDiscovery,
+            SignalingService,
+            AppLifecycleService,
             MessageService>(
           create: (_) => MessageService(),
-          update: (_, discovery, signaling, messages) {
+          update: (_, discovery, signaling, lifecycle, messages) {
             messages?.attach(discovery, signaling);
+            messages?.attachLifecycle(lifecycle);
             return messages ?? MessageService();
           },
         ),
@@ -143,6 +163,7 @@ class _AppRootState extends State<_AppRoot> {
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _setupListeners();
+      _setupNotificationTapHandler();
     });
   }
 
@@ -163,15 +184,54 @@ class _AppRootState extends State<_AppRoot> {
     _rtcSub = _rtc!.events.listen(_onRtcEvent);
   }
 
+  /// ✅ ربط الضغط على الإشعار بفتح المحادثة
+  void _setupNotificationTapHandler() {
+    LocalNotificationService.instance.onMessageTap = (
+      peerDeviceId,
+      messageId,
+    ) {
+      _openChatFromNotification(peerDeviceId, messageId);
+    };
+  }
+
+  void _openChatFromNotification(
+    String peerDeviceId,
+    String? messageId,
+  ) {
+    final nav = navigatorKey.currentState;
+    if (nav == null) return;
+
+    final peer = _discovery?.getDevice(peerDeviceId);
+    if (peer == null) {
+      debugPrint('[AppRoot] Peer not found: $peerDeviceId');
+      return;
+    }
+
+    debugPrint(
+      '[AppRoot] Opening chat from notification: $peerDeviceId',
+    );
+
+    nav.push(
+      MaterialPageRoute(
+        builder: (_) => ChatScreen(
+          peer: peer,
+          highlightMessageId: messageId,
+        ),
+      ),
+    );
+  }
+
+  // ============================================
+  // === أحداث RTC ===
+  // ============================================
+
   void _onRtcEvent(RtcEvent event) {
     switch (event.type) {
       case RtcEventType.incomingCall:
-        // ✅ لا نفتح شاشة Flutter — Callkit يعرض الواجهة تلقائيًا
-        debugPrint('[AppRoot] Incoming call — Callkit is handling it');
+        debugPrint('[AppRoot] Incoming call — Callkit handles UI');
         break;
 
       case RtcEventType.callAccepted:
-        // ✅ المستخدم قبل المكالمة → افتح شاشة المكالمة
         _openCallScreen(event);
         break;
 
@@ -184,24 +244,14 @@ class _AppRootState extends State<_AppRoot> {
     }
   }
 
-  // ============================================
-  // === فتح شاشة المكالمة بعد القبول ===
-  // ============================================
-
   void _openCallScreen(RtcEvent event) {
     if (_callScreenOpen) return;
 
     final nav = navigatorKey.currentState;
-    if (nav == null) {
-      debugPrint('[AppRoot] Navigator not ready');
-      return;
-    }
+    if (nav == null) return;
 
     final peer = _discovery?.getDevice(event.peerDeviceId);
-    if (peer == null) {
-      debugPrint('[AppRoot] Peer not found: ${event.peerDeviceId}');
-      return;
-    }
+    if (peer == null) return;
 
     _callScreenOpen = true;
 
