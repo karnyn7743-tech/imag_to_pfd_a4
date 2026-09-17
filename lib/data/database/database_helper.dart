@@ -22,6 +22,9 @@ class DatabaseHelper {
     return _db!;
   }
 
+  // ============================================
+  // === أسماء الجداول ===
+  // ============================================
   static const String tableDevices = 'devices';
   static const String tableConversations = 'conversations';
   static const String tableMessages = 'messages';
@@ -50,9 +53,7 @@ class DatabaseHelper {
   }
 
   Future<void> _onCreate(Database db, int version) async {
-    // --------------------------------------------
-    // جدول الأجهزة (مع عمود number الجديد)
-    // --------------------------------------------
+    // جدول الأجهزة
     await db.execute('''
       CREATE TABLE $tableDevices (
         device_id     TEXT PRIMARY KEY,
@@ -69,6 +70,7 @@ class DatabaseHelper {
       )
     ''');
 
+    // جدول المحادثات
     await db.execute('''
       CREATE TABLE $tableConversations (
         conversation_id     TEXT PRIMARY KEY,
@@ -85,6 +87,7 @@ class DatabaseHelper {
       )
     ''');
 
+    // جدول الرسائل
     await db.execute('''
       CREATE TABLE $tableMessages (
         message_id       TEXT PRIMARY KEY,
@@ -109,6 +112,7 @@ class DatabaseHelper {
       )
     ''');
 
+    // جدول سجل المكالمات
     await db.execute('''
       CREATE TABLE $tableCallLogs (
         call_id          TEXT PRIMARY KEY,
@@ -144,20 +148,15 @@ class DatabaseHelper {
     );
   }
 
-  // ============================================
-  // === الترقية (من الإصدار 1 إلى 2) ===
-  // ============================================
   Future<void> _onUpgrade(
     Database db,
     int oldVersion,
     int newVersion,
   ) async {
     if (oldVersion < 2) {
-      // إضافة عمود number لجدول الأجهزة
       await db.execute(
         "ALTER TABLE $tableDevices ADD COLUMN number TEXT NOT NULL DEFAULT ''",
       );
-      // فهرس للبحث السريع
       await db.execute(
         'CREATE INDEX idx_devices_number ON $tableDevices(number)',
       );
@@ -204,7 +203,6 @@ class DatabaseHelper {
     return rows.isEmpty ? null : rows.first;
   }
 
-  /// بحث سريع بالرقم
   Future<Map<String, dynamic>?> getDeviceByNumber(String number) async {
     final rows = await db.query(
       tableDevices,
@@ -215,7 +213,6 @@ class DatabaseHelper {
     return rows.isEmpty ? null : rows.first;
   }
 
-  /// هل الرقم مستخدم من قبل جهاز آخر؟
   Future<bool> isNumberUsedByOther(
     String number,
     String excludeDeviceId,
@@ -229,7 +226,6 @@ class DatabaseHelper {
     return rows.isNotEmpty;
   }
 
-  /// كل الأرقام المستخدمة حاليًا
   Future<Set<String>> getAllUsedNumbers() async {
     final rows = await db.query(
       tableDevices,
@@ -335,6 +331,83 @@ class DatabaseHelper {
       where: 'conversation_id = ?',
       whereArgs: [conversationId],
     );
+  }
+
+  // ============================================
+  // === إدارة المحادثات: تثبيت / أرشفة (جديد) ===
+  // ============================================
+
+  /// المحادثات غير المؤرشفة فقط
+  Future<List<Map<String, dynamic>>> getVisibleConversations() async {
+    return db.query(
+      tableConversations,
+      where: 'is_archived = 0',
+      orderBy: 'is_pinned DESC, last_message_time DESC',
+    );
+  }
+
+  /// المحادثات المؤرشفة فقط
+  Future<List<Map<String, dynamic>>> getArchivedConversations() async {
+    return db.query(
+      tableConversations,
+      where: 'is_archived = 1',
+      orderBy: 'last_message_time DESC',
+    );
+  }
+
+  /// عدد المحادثات المؤرشفة
+  Future<int> getArchivedCount() async {
+    final result = await db.rawQuery(
+      'SELECT COUNT(*) as count FROM $tableConversations '
+      'WHERE is_archived = 1',
+    );
+    return (result.first['count'] as int?) ?? 0;
+  }
+
+  /// تفعيل/إلغاء التثبيت
+  Future<int> togglePin(String conversationId, bool isPinned) async {
+    return db.update(
+      tableConversations,
+      {'is_pinned': isPinned ? 1 : 0},
+      where: 'conversation_id = ?',
+      whereArgs: [conversationId],
+    );
+  }
+
+  /// تفعيل/إلغاء الأرشفة
+  Future<int> toggleArchive(String conversationId, bool isArchived) async {
+    return db.update(
+      tableConversations,
+      {'is_archived': isArchived ? 1 : 0},
+      where: 'conversation_id = ?',
+      whereArgs: [conversationId],
+    );
+  }
+
+  /// هل هذه المحادثة مثبّتة؟
+  Future<bool> isPinned(String conversationId) async {
+    final result = await db.query(
+      tableConversations,
+      columns: ['is_pinned'],
+      where: 'conversation_id = ?',
+      whereArgs: [conversationId],
+      limit: 1,
+    );
+    if (result.isEmpty) return false;
+    return (result.first['is_pinned'] as int?) == 1;
+  }
+
+  /// هل هذه المحادثة مؤرشفة؟
+  Future<bool> isArchived(String conversationId) async {
+    final result = await db.query(
+      tableConversations,
+      columns: ['is_archived'],
+      where: 'conversation_id = ?',
+      whereArgs: [conversationId],
+      limit: 1,
+    );
+    if (result.isEmpty) return false;
+    return (result.first['is_archived'] as int?) == 1;
   }
 
   // ============================================
