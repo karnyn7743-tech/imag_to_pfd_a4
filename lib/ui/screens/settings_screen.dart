@@ -9,6 +9,7 @@ import '../../core/providers/theme_provider.dart';
 import '../../data/database/database_helper.dart';
 import '../theme/app_theme.dart';
 import '../widgets/permission_dialog.dart';
+import 'qr_display_screen.dart';
 
 /// ============================================================
 /// شاشة الإعدادات
@@ -41,7 +42,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     try {
       final discovery = context.read<DeviceDiscovery>();
 
-      // ✅ فحص حالة تعطيل تحسين البطارية
       final batteryStatus =
           await ph.Permission.ignoreBatteryOptimizations.status;
 
@@ -202,6 +202,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   // ============================================
+  // === عرض QR ===
+  // ============================================
+
+  void _openQrDisplay() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const QrDisplayScreen()),
+    );
+  }
+
+  // ============================================
   // === المظهر ===
   // ============================================
 
@@ -239,12 +249,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   // ============================================
-  // === تعطيل تحسين البطارية (جديد) ===
+  // === تعطيل تحسين البطارية ===
   // ============================================
 
   Future<void> _requestIgnoreBatteryOptimizations() async {
     try {
-      // 1) هل الإذن ممنوح بالفعل؟
       final status = await ph.Permission.ignoreBatteryOptimizations.status;
 
       if (status.isGranted) {
@@ -254,7 +263,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         return;
       }
 
-      // 2) اشرح للمستخدم قبل الطلب
       if (!mounted) return;
       final proceed = await showDialog<bool>(
         context: context,
@@ -287,7 +295,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
       if (proceed != true || !mounted) return;
 
-      // 3) اطلب الإذن
       final result = await ph.Permission.ignoreBatteryOptimizations.request();
 
       if (!mounted) return;
@@ -306,7 +313,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   // ============================================
-  // === دليل الأجهزة الصينية (جديد) ===
+  // === دليل الأجهزة الصينية ===
   // ============================================
 
   Future<void> _showChineseDeviceHelp() async {
@@ -317,7 +324,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           children: [
             Icon(Icons.help_outline, color: AppTheme.primaryColor),
             SizedBox(width: 8),
-            Text('إعدادات موثوقية إضافية'),
+            Expanded(child: Text('إعدادات موثوقية إضافية')),
           ],
         ),
         content: SingleChildScrollView(
@@ -543,7 +550,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               padding: const EdgeInsets.symmetric(vertical: 8),
               children: [
                 _buildDeviceHeader(),
-                const _SectionTitle(title: 'رقم الاتصال'),
+                const _SectionTitle(title: 'رقم الاتصال والاقتران'),
                 _buildNumberSection(),
                 const _SectionTitle(title: 'المظهر'),
                 _buildThemeSection(),
@@ -669,12 +676,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   // ============================================
-  // === رقم الاتصال ===
+  // === قسم الرقم + QR (محدّث) ===
   // ============================================
 
   Widget _buildNumberSection() {
     return _SettingsCard(
       children: [
+        // الرقم
         ListTile(
           leading: Container(
             width: 48,
@@ -704,16 +712,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
           trailing: const Icon(Icons.chevron_left),
           onTap: _editDeviceNumber,
         ),
+
+        // ✅ جديد: عرض QR
         ListTile(
-          leading: const Icon(Icons.info_outline, size: 20),
-          title: const Text(
-            'يُستخدم هذا الرقم للاتصال بك',
-            style: TextStyle(fontSize: 13),
+          leading: Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: const Color(0xFF25D366).withOpacity(0.15),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            alignment: Alignment.center,
+            child: const Icon(
+              Icons.qr_code_2,
+              color: Color(0xFF25D366),
+              size: 26,
+            ),
           ),
+          title: const Text('رمز QR للمشاركة'),
           subtitle: const Text(
-            'يجب أن يكون فريدًا على شبكتك',
-            style: TextStyle(fontSize: 12),
+            'اعرض رمزك ليقترن الآخرون بك',
           ),
+          trailing: const Icon(Icons.chevron_left),
+          onTap: _openQrDisplay,
         ),
       ],
     );
@@ -796,13 +817,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   // ============================================
-  // === الموثوقية في الخلفية (جديد) ===
+  // === الموثوقية ===
   // ============================================
 
   Widget _buildReliabilitySection() {
     return _SettingsCard(
       children: [
-        // تعطيل تحسين البطارية
         ListTile(
           leading: Icon(
             _batteryOptimizationDisabled
@@ -826,8 +846,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
           trailing: const Icon(Icons.chevron_left),
           onTap: _requestIgnoreBatteryOptimizations,
         ),
-
-        // دليل الأجهزة الصينية
         ListTile(
           leading: const Icon(
             Icons.phone_android_outlined,
