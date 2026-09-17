@@ -64,7 +64,7 @@ class AppConstants {
   // === قاعدة البيانات ===
   // ============================================
   static const String databaseName = 'lan_phone.db';
-  static const int databaseVersion = 2; // ← رُفع من 1 إلى 2
+  static const int databaseVersion = 3; // ← رُفع من 2 إلى 3
 
   // ============================================
   // === المفاتيح (SharedPreferences) ===
