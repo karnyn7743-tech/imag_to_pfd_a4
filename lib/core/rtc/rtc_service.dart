@@ -3,20 +3,16 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
+import '../../data/database/database_helper.dart';
 import '../constants.dart';
 import '../signaling/signaling_service.dart';
 
 /// ============================================================
-/// محرك WebRTC لإدارة المكالمات الصوتية والمرئية
-/// ------------------------------------------------
-/// يعتمد على SignalingService لتبادل SDP/ICE
+/// محرك WebRTC — مع تسجيل المكالمات في قاعدة البيانات
 /// ============================================================
 class RtcService extends ChangeNotifier {
   RtcService();
 
-  // ============================================
-  // === المراجع الخارجية ===
-  // ============================================
   SignalingService? _signaling;
   StreamSubscription<SignalingMessage>? _messageSub;
 
@@ -28,7 +24,7 @@ class RtcService extends ChangeNotifier {
   }
 
   // ============================================
-  // === حالة المكالمة الحالية ===
+  // === حالة المكالمة ===
   // ============================================
   String _currentCallId = '';
   String get currentCallId => _currentCallId;
@@ -51,6 +47,9 @@ class RtcService extends ChangeNotifier {
 
   DateTime? _callStartedAt;
   DateTime? get callStartedAt => _callStartedAt;
+
+  // تتبع بدء المكالمة لتسجيلها
+  DateTime? _callLogStartTime;
 
   int get callDurationSeconds {
     if (_callStartedAt == null) return 0;
@@ -91,9 +90,7 @@ class RtcService extends ChangeNotifier {
   // === الإعدادات ===
   // ============================================
   final Map<String, dynamic> _iceServers = const {
-    'iceServers': <Map<String, dynamic>>[
-      // شبكة محلية → لا نحتاج STUN/TURN خارجي
-    ],
+    'iceServers': <Map<String, dynamic>>[],
     'sdpSemantics': 'unified-plan',
   };
 
@@ -109,7 +106,6 @@ class RtcService extends ChangeNotifier {
       'googNoiseSuppression': true,
       'googHighpassFilter': true,
       'googTypingNoiseDetection': true,
-      // جودة قريبة من GSM
       'sampleRate': AppConstants.audioSampleRate,
       'channelCount': AppConstants.audioChannels,
     },
@@ -130,7 +126,7 @@ class RtcService extends ChangeNotifier {
   };
 
   // ============================================
-  // === Streams للأحداث ===
+  // === Streams ===
   // ============================================
   final StreamController<RtcEvent> _eventController =
       StreamController<RtcEvent>.broadcast();
@@ -162,33 +158,28 @@ class RtcService extends ChangeNotifier {
     _isCaller = true;
     _callState = AppConstants.callStateCalling;
     _hasRemoteVideo = false;
+    _callLogStartTime = DateTime.now();
     notifyListeners();
 
+    // ✅ سجّل المكالمة في قاعدة البيانات فورًا
+    await _logCallStart(direction: AppConstants.callDirectionOutgoing);
+
     try {
-      // 1) فتح الميكروفون/الكاميرا أولًا
       await _openLocalMedia(callType);
-
-      // 2) إنشاء RTCPeerConnection
       await _createPeerConnection();
-
-      // 3) إضافة المسارات
       await _addLocalTracks();
 
-      // 4) إنشاء عرض SDP
       final offer = await _pc!.createOffer({
         'offerToReceiveAudio': true,
         'offerToReceiveVideo': callType == AppConstants.callTypeVideo,
       });
       await _pc!.setLocalDescription(offer);
 
-      // 5) إرسال الدعوة عبر Signaling
       await _signaling!.sendTo(peerDeviceId, {
         'type': AppConstants.msgCallInvite,
         'callId': _currentCallId,
         'media': callType,
-        'peerName': _signaling!.connectedDeviceIds.contains(peerDeviceId)
-            ? peerName
-            : peerName,
+        'peerName': peerName,
         'sdp': offer.sdp,
         'sdpType': offer.type,
       });
@@ -197,6 +188,7 @@ class RtcService extends ChangeNotifier {
       return true;
     } catch (e) {
       debugPrint('[RTC] startCall error: $e');
+      await _saveCallLogEnd(state: AppConstants.callStateDeclined);
       await _cleanup();
       _callState = AppConstants.callStateIdle;
       notifyListeners();
@@ -210,7 +202,6 @@ class RtcService extends ChangeNotifier {
 
   Future<void> _handleIncomingCall(SignalingMessage msg) async {
     if (isInCall) {
-      // مشغول — نرفض
       await _signaling?.sendTo(msg.from, {
         'type': AppConstants.msgCallBusy,
         'callId': msg.payload['callId'],
@@ -225,9 +216,12 @@ class RtcService extends ChangeNotifier {
     _isCaller = false;
     _callState = AppConstants.callStateRinging;
     _hasRemoteVideo = false;
+    _callLogStartTime = DateTime.now();
     notifyListeners();
 
-    // نبّه الواجهة لعرض شاشة المكالمة الواردة
+    // ✅ سجّل المكالمة الواردة
+    await _logCallStart(direction: AppConstants.callDirectionIncoming);
+
     _eventController.add(RtcEvent(
       type: RtcEventType.incomingCall,
       callId: _currentCallId,
@@ -237,7 +231,6 @@ class RtcService extends ChangeNotifier {
     ));
   }
 
-  /// قبول المكالمة الواردة
   Future<bool> acceptCall() async {
     if (_callState != AppConstants.callStateRinging) return false;
 
@@ -245,14 +238,10 @@ class RtcService extends ChangeNotifier {
       _callState = AppConstants.callStateConnecting;
       notifyListeners();
 
-      // 1) فتح الوسائط المحلية
       await _openLocalMedia(_callType);
-
-      // 2) إنشاء الاتصال
       await _createPeerConnection();
       await _addLocalTracks();
 
-      // 3) إرسال إشعار القبول
       await _signaling!.sendTo(_peerDeviceId, {
         'type': AppConstants.msgCallAccept,
         'callId': _currentCallId,
@@ -267,7 +256,6 @@ class RtcService extends ChangeNotifier {
     }
   }
 
-  /// رفض المكالمة
   Future<void> rejectCall({String reason = 'declined'}) async {
     if (_callState != AppConstants.callStateRinging) return;
 
@@ -279,6 +267,8 @@ class RtcService extends ChangeNotifier {
 
     _callState = AppConstants.callStateDeclined;
     notifyListeners();
+
+    await _saveCallLogEnd(state: AppConstants.callStateDeclined);
     await _cleanup();
     _resetState();
   }
@@ -292,35 +282,27 @@ class RtcService extends ChangeNotifier {
       case AppConstants.msgCallInvite:
         await _handleIncomingCall(msg);
         break;
-
       case AppConstants.msgCallAccept:
         await _handleCallAccept(msg);
         break;
-
       case AppConstants.msgCallReject:
         await _handleCallReject(msg);
         break;
-
       case AppConstants.msgCallBusy:
         await _handleCallBusy(msg);
         break;
-
       case AppConstants.msgCallEnd:
         await _handleRemoteEnd();
         break;
-
       case AppConstants.msgSdpOffer:
         await _handleSdpOffer(msg);
         break;
-
       case AppConstants.msgSdpAnswer:
         await _handleSdpAnswer(msg);
         break;
-
       case AppConstants.msgIceCandidate:
         await _handleRemoteIce(msg);
         break;
-
       default:
         break;
     }
@@ -328,7 +310,6 @@ class RtcService extends ChangeNotifier {
 
   Future<void> _handleCallAccept(SignalingMessage msg) async {
     if (_callState != AppConstants.callStateCalling) return;
-
     _callState = AppConstants.callStateConnecting;
     notifyListeners();
   }
@@ -347,6 +328,7 @@ class RtcService extends ChangeNotifier {
     ));
     notifyListeners();
 
+    await _saveCallLogEnd(state: AppConstants.callStateDeclined);
     await _cleanup();
     _resetState();
   }
@@ -365,6 +347,7 @@ class RtcService extends ChangeNotifier {
     ));
     notifyListeners();
 
+    await _saveCallLogEnd(state: AppConstants.callStateDeclined);
     await _cleanup();
     _resetState();
   }
@@ -381,13 +364,19 @@ class RtcService extends ChangeNotifier {
       reason: 'ended',
     ));
 
+    // إذا لم يُرد أحد (لم نصل إلى connected أبدًا)
+    final finalState = _callStartedAt == null
+        ? AppConstants.callStateMissed
+        : AppConstants.callStateEnded;
+
+    await _saveCallLogEnd(state: finalState);
     await _cleanup();
     _resetState();
     notifyListeners();
   }
 
   // ============================================
-  // === تبادل SDP/ICE ===
+  // === SDP/ICE ===
   // ============================================
 
   Future<void> _handleSdpOffer(SignalingMessage msg) async {
@@ -398,14 +387,9 @@ class RtcService extends ChangeNotifier {
       final sdp = msg.payload['sdp'] as String;
       final type = msg.payload['sdpType'] as String? ?? 'offer';
 
-      await _pc!.setRemoteDescription(
-        RTCSessionDescription(sdp, type),
-      );
-
-      // معالجة الـ candidates المعلّقة
+      await _pc!.setRemoteDescription(RTCSessionDescription(sdp, type));
       await _drainPendingCandidates();
 
-      // إنشاء answer
       final answer = await _pc!.createAnswer({
         'offerToReceiveAudio': true,
         'offerToReceiveVideo': _callType == AppConstants.callTypeVideo,
@@ -433,10 +417,7 @@ class RtcService extends ChangeNotifier {
       final sdp = msg.payload['sdp'] as String;
       final type = msg.payload['sdpType'] as String? ?? 'answer';
 
-      await _pc!.setRemoteDescription(
-        RTCSessionDescription(sdp, type),
-      );
-
+      await _pc!.setRemoteDescription(RTCSessionDescription(sdp, type));
       await _drainPendingCandidates();
 
       debugPrint('[RTC] SDP answer applied');
@@ -456,7 +437,6 @@ class RtcService extends ChangeNotifier {
     );
 
     if (_pc == null || _pc!.getRemoteDescription() == null) {
-      // لم يُفعَّل الـ peer بعد — احفظها مؤقتًا
       _pendingCandidates.add(candidate);
       return;
     }
@@ -479,7 +459,7 @@ class RtcService extends ChangeNotifier {
   }
 
   // ============================================
-  // === إنشاء RTCPeerConnection ===
+  // === RTCPeerConnection ===
   // ============================================
 
   Future<void> _createPeerConnection() async {
@@ -490,9 +470,6 @@ class RtcService extends ChangeNotifier {
       ],
     });
 
-    // --------------------------------------------------------
-    // عند وصول ICE candidate محلي → نرسله للطرف الآخر
-    // --------------------------------------------------------
     _pc!.onIceCandidate = (candidate) async {
       if (candidate.candidate == null) return;
       await _signaling!.sendTo(_peerDeviceId, {
@@ -506,14 +483,10 @@ class RtcService extends ChangeNotifier {
       });
     };
 
-    // --------------------------------------------------------
-    // عند وصول مسار بعيد (صوت/فيديو)
-    // --------------------------------------------------------
     _pc!.onTrack = (RTCTrackEvent event) {
       debugPrint('[RTC] Remote track: ${event.track.kind}');
       if (event.streams.isNotEmpty) {
         _remoteStream = event.streams[0];
-
         if (event.track.kind == 'video') {
           _hasRemoteVideo = true;
         }
@@ -529,9 +502,6 @@ class RtcService extends ChangeNotifier {
       }
     };
 
-    // --------------------------------------------------------
-    // تغيّر حالة ICE
-    // --------------------------------------------------------
     _pc!.onIceConnectionState = (state) {
       debugPrint('[RTC] ICE state: $state');
       if (state == RTCIceConnectionState.RTCIceConnectionStateFailed) {
@@ -539,15 +509,16 @@ class RtcService extends ChangeNotifier {
       }
     };
 
-    // --------------------------------------------------------
-    // تغيّر حالة الاتصال العامة
-    // --------------------------------------------------------
     _pc!.onConnectionState = (state) {
       debugPrint('[RTC] Connection state: $state');
       switch (state) {
         case RTCPeerConnectionState.RTCPeerConnectionStateConnected:
           _callState = AppConstants.callStateConnected;
           _callStartedAt ??= DateTime.now();
+
+          // ✅ حدّث السجل إلى connected
+          _updateCallLogState(AppConstants.callStateConnected);
+
           notifyListeners();
           break;
         case RTCPeerConnectionState.RTCPeerConnectionStateDisconnected:
@@ -562,32 +533,25 @@ class RtcService extends ChangeNotifier {
       }
     };
 
-    // --------------------------------------------------------
-    // عند وصول إعادة تفاوض (نادرة في تطبيقنا)
-    // --------------------------------------------------------
     _pc!.onRenegotiationNeeded = () {
       debugPrint('[RTC] Renegotiation needed');
     };
   }
 
   // ============================================
-  // === إدارة الوسائط المحلية ===
+  // === الوسائط المحلية ===
   // ============================================
 
   Future<void> _openLocalMedia(String callType) async {
     final constraints = <String, dynamic>{};
-
-    // الصوت دائمًا
     constraints.addAll(_audioConstraints);
 
-    // الفيديو فقط عند الحاجة
     if (callType == AppConstants.callTypeVideo) {
       constraints.addAll(_videoConstraints);
     }
 
     _localStream = await navigator.mediaDevices.getUserMedia(constraints);
 
-    // فحص عدد مسارات الفيديو
     if (callType != AppConstants.callTypeVideo) {
       _isVideoEnabled = false;
     }
@@ -602,10 +566,9 @@ class RtcService extends ChangeNotifier {
   }
 
   // ============================================
-  // === التحكم أثناء المكالمة ===
+  // === التحكم ===
   // ============================================
 
-  /// كتم/إلغاء كتم الميكروفون
   void toggleMute() {
     if (_localStream == null) return;
     for (final track in _localStream!.getAudioTracks()) {
@@ -615,21 +578,17 @@ class RtcService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// تشغيل/إيقاف الكاميرا
   Future<void> toggleVideo() async {
     if (_localStream == null) return;
 
     final videoTracks = _localStream!.getVideoTracks();
 
     if (videoTracks.isEmpty && !_isVideoEnabled) {
-      // إعادة تفعيل الكاميرا
       try {
-        final stream = await navigator.mediaDevices.getUserMedia(
-          _videoConstraints,
-        );
+        final stream =
+            await navigator.mediaDevices.getUserMedia(_videoConstraints);
         final newTrack = stream.getVideoTracks().first;
         await _pc?.addTrack(newTrack, _localStream!);
-
         _isVideoEnabled = true;
       } catch (e) {
         debugPrint('[RTC] re-enable video error: $e');
@@ -644,7 +603,6 @@ class RtcService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// تبديل الكاميرا الأمامية/الخلفية
   Future<void> switchCamera() async {
     if (_localStream == null) return;
     final videoTracks = _localStream!.getVideoTracks();
@@ -659,7 +617,6 @@ class RtcService extends ChangeNotifier {
     }
   }
 
-  /// تشغيل/إيقاف مكبر الصوت
   Future<void> toggleSpeaker() async {
     _isSpeakerOn = !_isSpeakerOn;
     await Helper.setSpeakerphoneOn(_isSpeakerOn);
@@ -673,7 +630,19 @@ class RtcService extends ChangeNotifier {
   Future<void> endCall({String reason = 'user-hangup'}) async {
     if (!isInCall) return;
 
-    // أخبر الطرف الآخر
+    // حدّد الحالة النهائية
+    String finalState;
+    if (_callStartedAt != null) {
+      finalState = AppConstants.callStateEnded; // مكالمة تمت فعلًا
+    } else if (reason == 'disconnected' || reason == 'ice-failed') {
+      finalState = AppConstants.callStateDeclined; // فشل الاتصال
+    } else {
+      finalState = AppConstants.callStateMissed; // لم يُرد
+    }
+
+    // سجّل قبل إبلاغ الطرف الآخر
+    await _saveCallLogEnd(state: finalState);
+
     if (_signaling != null && _peerDeviceId.isNotEmpty) {
       try {
         await _signaling!.sendTo(_peerDeviceId, {
@@ -699,11 +668,70 @@ class RtcService extends ChangeNotifier {
   }
 
   // ============================================
-  // === تنظيف الموارد ===
+  // === تسجيل المكالمات في DB ===
+  // ============================================
+
+  /// تسجيل بدء مكالمة جديدة
+  Future<void> _logCallStart({required String direction}) async {
+    try {
+      await DatabaseHelper.instance.insertCallLog({
+        'call_id': _currentCallId,
+        'peer_device_id': _peerDeviceId,
+        'peer_name': _peerName,
+        'type': _callType,
+        'direction': direction,
+        'state': AppConstants.callStateRinging,
+        'started_at': _callLogStartTime?.millisecondsSinceEpoch ??
+            DateTime.now().millisecondsSinceEpoch,
+        'duration_seconds': 0,
+      });
+      debugPrint('[RTC] Call logged: $_currentCallId ($direction)');
+    } catch (e) {
+      debugPrint('[RTC] logCallStart error: $e');
+    }
+  }
+
+  /// تحديث حالة السجل (مثلاً من ringing → connected)
+  Future<void> _updateCallLogState(String state) async {
+    try {
+      await DatabaseHelper.instance.updateCallLog(
+        callId: _currentCallId,
+        state: state,
+        endedAt: 0,
+        durationSeconds: 0,
+      );
+    } catch (e) {
+      debugPrint('[RTC] updateCallLogState error: $e');
+    }
+  }
+
+  /// إنهاء السجل
+  Future<void> _saveCallLogEnd({required String state}) async {
+    if (_currentCallId.isEmpty) return;
+
+    try {
+      final endTime = DateTime.now();
+      final duration = _callStartedAt != null
+          ? endTime.difference(_callStartedAt!).inSeconds
+          : 0;
+
+      await DatabaseHelper.instance.updateCallLog(
+        callId: _currentCallId,
+        state: state,
+        endedAt: endTime.millisecondsSinceEpoch,
+        durationSeconds: duration,
+      );
+      debugPrint('[RTC] Call log ended: $_currentCallId, state=$state');
+    } catch (e) {
+      debugPrint('[RTC] saveCallLogEnd error: $e');
+    }
+  }
+
+  // ============================================
+  // === تنظيف ===
   // ============================================
 
   Future<void> _cleanup() async {
-    // إيقاف المسارات
     if (_localStream != null) {
       for (final track in _localStream!.getTracks()) {
         try {
@@ -719,7 +747,6 @@ class RtcService extends ChangeNotifier {
       _localStream = null;
     }
 
-    // إغلاق الاتصال
     try {
       await _pc?.close();
     } catch (_) {}
@@ -729,7 +756,6 @@ class RtcService extends ChangeNotifier {
     _pendingCandidates.clear();
     _hasRemoteVideo = false;
 
-    // إعادة حالة مكبر الصوت لطبيعتها
     try {
       await Helper.setSpeakerphoneOn(false);
     } catch (_) {}
@@ -744,14 +770,11 @@ class RtcService extends ChangeNotifier {
     _callState = AppConstants.callStateIdle;
     _isCaller = false;
     _callStartedAt = null;
+    _callLogStartTime = null;
     _isMuted = false;
     _isVideoEnabled = true;
     _isFrontCamera = true;
   }
-
-  // ============================================
-  // === أدوات ===
-  // ============================================
 
   String _generateCallId() {
     return 'call_${DateTime.now().millisecondsSinceEpoch}_${_randomSuffix()}';
@@ -779,7 +802,7 @@ class RtcService extends ChangeNotifier {
 }
 
 // ============================================================
-// === نماذج الأحداث ===
+// === نماذج ===
 // ============================================================
 
 enum RtcEventType {
