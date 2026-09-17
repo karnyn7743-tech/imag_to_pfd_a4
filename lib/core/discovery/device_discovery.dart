@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:multicast_dns/multicast_dns.dart';
@@ -13,9 +14,7 @@ import 'discovered_device.dart';
 
 /// ============================================================
 /// خدمة اكتشاف الأجهزة على الشبكة المحلية
-/// تعتمد على:
-///   1) UDP Broadcast (الأساسية والموثوقة)
-///   2) mDNS (كآلية ثانوية)
+/// مع دعم رقم الاتصال (مثل رقم SIM)
 /// ============================================================
 class DeviceDiscovery extends ChangeNotifier {
   DeviceDiscovery();
@@ -24,33 +23,33 @@ class DeviceDiscovery extends ChangeNotifier {
   // === الحالة الداخلية ===
   // ============================================
 
-  /// معرّف هذا الجهاز (يُنشأ أول مرة فقط ويُخزَّن)
   String _deviceId = '';
   String get deviceId => _deviceId;
 
-  /// اسم هذا الجهاز (يظهر للآخرين)
   String _deviceName = '';
   String get deviceName => _deviceName;
 
-  /// IP هذا الجهاز على الشبكة المحلية
+  /// رقم الاتصال الخاص بنا (مثل 4500)
+  String _deviceNumber = '';
+  String get deviceNumber => _deviceNumber;
+
   String _localIp = '';
   String get localIp => _localIp;
 
-  /// هل الخدمة تعمل الآن؟
   bool _isRunning = false;
   bool get isRunning => _isRunning;
 
-  /// خريطة الأجهزة المكتشفة (deviceId → DiscoveredDevice)
   final Map<String, DiscoveredDevice> _devices = {};
   List<DiscoveredDevice> get devices => _devices.values.toList();
 
-  /// قائمة الأجهزة المتصلة فقط (آخر نبضة خلال المهلة)
-  List<DiscoveredDevice> get onlineDevices => _devices.values
-      .where((d) => d.isOnline)
-      .toList();
+  List<DiscoveredDevice> get onlineDevices =>
+      _devices.values.where((d) => d.isOnline).toList();
+
+  /// خريطة عكسية: number → deviceId (للبحث السريع)
+  final Map<String, String> _numberToDeviceId = {};
 
   // ============================================
-  // === الـ Sockets والـ Timers ===
+  // === Sockets و Timers ===
   // ============================================
   RawDatagramSocket? _udpSocket;
   Timer? _announceTimer;
@@ -61,34 +60,34 @@ class DeviceDiscovery extends ChangeNotifier {
   StreamSubscription<PtrResourceRecord>? _mdnsSubscription;
 
   // ============================================
-  // === دورة حياة الخدمة ===
+  // === دورة الحياة ===
   // ============================================
 
-  /// بدء الاكتشاف
   Future<void> start() async {
     if (_isRunning) return;
 
     try {
-      // 1) تحميل/إنشاء هوية هذا الجهاز
+      // 1) تحميل/إنشاء الهوية
       await _loadOrCreateIdentity();
 
       // 2) اكتشاف IP المحلي
       _localIp = await _detectLocalIp();
       debugPrint('[Discovery] Local IP: $_localIp');
+      debugPrint('[Discovery] Device: $_deviceName (#$_deviceNumber)');
 
-      // 3) فتح UDP Socket
+      // 3) فتح UDP
       await _openUdpSocket();
 
       // 4) بدء mDNS
       _startMdns();
 
-      // 5) تحميل الأجهزة المخزنة من قاعدة البيانات
+      // 5) تحميل الأجهزة المخزنة
       await _loadStoredDevices();
 
-      // 6) إرسال أول نبضة تعريف فورًا
+      // 6) نبضة أولى
       _sendAnnounce();
 
-      // 7) تشغيل المؤقتات
+      // 7) المؤقتات
       _announceTimer = Timer.periodic(
         const Duration(seconds: AppConstants.announceIntervalSeconds),
         (_) => _sendAnnounce(),
@@ -99,14 +98,11 @@ class DeviceDiscovery extends ChangeNotifier {
         (_) => _cleanupStaleDevices(),
       );
 
-      // نبضة أسرع في البداية لتسريع الاكتشاف
       _presenceTimer = Timer.periodic(
         const Duration(seconds: 2),
-        (t) {
-          _sendAnnounce();
-        },
+        (_) => _sendAnnounce(),
       );
-      // إيقاف النبض السريع بعد 30 ثانية
+
       Future.delayed(const Duration(seconds: 30), () {
         _presenceTimer?.cancel();
         _presenceTimer = null;
@@ -114,14 +110,11 @@ class DeviceDiscovery extends ChangeNotifier {
 
       _isRunning = true;
       notifyListeners();
-
-      debugPrint('[Discovery] Service started. DeviceId=$_deviceId');
     } catch (e) {
       debugPrint('[Discovery] Failed to start: $e');
     }
   }
 
-  /// إيقاف الاكتشاف
   Future<void> stop() async {
     _announceTimer?.cancel();
     _cleanupTimer?.cancel();
@@ -135,7 +128,6 @@ class DeviceDiscovery extends ChangeNotifier {
     _mdnsClient?.stop();
     _mdnsClient = null;
 
-    // إرسال رسالة وداع قبل الإغلاق
     try {
       _sendBye();
     } catch (_) {}
@@ -145,8 +137,6 @@ class DeviceDiscovery extends ChangeNotifier {
 
     _isRunning = false;
     notifyListeners();
-
-    debugPrint('[Discovery] Service stopped');
   }
 
   @override
@@ -156,13 +146,13 @@ class DeviceDiscovery extends ChangeNotifier {
   }
 
   // ============================================
-  // === الهوية (Identity) ===
+  // === الهوية (Identity + Number) ===
   // ============================================
 
   Future<void> _loadOrCreateIdentity() async {
     final prefs = await SharedPreferences.getInstance();
 
-    // معرّف الجهاز
+    // 1) معرّف الجهاز
     var id = prefs.getString(AppConstants.keyDeviceId);
     if (id == null || id.isEmpty) {
       id = const Uuid().v4();
@@ -170,17 +160,65 @@ class DeviceDiscovery extends ChangeNotifier {
     }
     _deviceId = id;
 
-    // اسم الجهاز
+    // 2) اسم الجهاز
     var name = prefs.getString(AppConstants.keyDeviceName);
     if (name == null || name.isEmpty) {
-      // اسم افتراضي: LanPhone-XXXX (آخر 4 أحرف من المعرّف)
       name = 'LanPhone-${_deviceId.substring(0, 4).toUpperCase()}';
       await prefs.setString(AppConstants.keyDeviceName, name);
     }
     _deviceName = name;
+
+    // 3) رقم الاتصال
+    var number = prefs.getString(AppConstants.keyDeviceNumber);
+    if (number == null || number.isEmpty) {
+      // أول تشغيل — نولّد رقمًا جديدًا
+      number = await _generateUniqueNumber();
+      await prefs.setString(AppConstants.keyDeviceNumber, number);
+      debugPrint('[Discovery] Generated number: $number');
+    }
+    _deviceNumber = number;
   }
 
-  /// تحديث اسم الجهاز (من الإعدادات)
+  /// توليد رقم اتصال فريد (4 أرقام)
+  Future<String> _generateUniqueNumber() async {
+    // 1) اجمع كل الأرقام المستخدمة حاليًا
+    final usedNumbers = <String>{};
+
+    // من الأجهزة المكتشفة في الذاكرة
+    for (final d in _devices.values) {
+      if (d.hasValidNumber) usedNumbers.add(d.number);
+    }
+
+    // من قاعدة البيانات
+    try {
+      final dbNumbers = await DatabaseHelper.instance.getAllUsedNumbers();
+      usedNumbers.addAll(dbNumbers);
+    } catch (_) {}
+
+    // 2) حاول عدة مرات لتوليد رقم غير مستخدم
+    final random = Random.secure();
+    for (var i = 0; i < AppConstants.numberGenerationRetries; i++) {
+      final candidate = (AppConstants.numberMin +
+              random.nextInt(
+                AppConstants.numberMax - AppConstants.numberMin + 1,
+              ))
+          .toString();
+
+      if (!usedNumbers.contains(candidate)) {
+        return candidate;
+      }
+    }
+
+    // 3) إذا فشلنا (نادر جدًا) → استخدم رقمًا مشتقًا من deviceId
+    final hash = _deviceId.hashCode.abs();
+    final fallback = (AppConstants.numberMin +
+            (hash % (AppConstants.numberMax - AppConstants.numberMin + 1)))
+        .toString();
+    debugPrint('[Discovery] Fallback number: $fallback');
+    return fallback;
+  }
+
+  /// تحديث اسم الجهاز
   Future<void> updateDeviceName(String newName) async {
     if (newName.trim().isEmpty) return;
     _deviceName = newName.trim();
@@ -190,19 +228,51 @@ class DeviceDiscovery extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// تحديث رقم الجهاز (من الإعدادات)
+  Future<bool> updateDeviceNumber(String newNumber) async {
+    if (newNumber.length != 4) return false;
+    final parsed = int.tryParse(newNumber);
+    if (parsed == null ||
+        parsed < AppConstants.numberMin ||
+        parsed > AppConstants.numberMax) {
+      return false;
+    }
+
+    // تحقق: هل الرقم مستخدم من جهاز آخر؟
+    final usedByOther = _numberToDeviceId.containsKey(newNumber) &&
+        _numberToDeviceId[newNumber] != _deviceId;
+    if (usedByOther) {
+      debugPrint('[Discovery] Number $newNumber already in use');
+      return false;
+    }
+
+    try {
+      final dbUsed = await DatabaseHelper.instance.isNumberUsedByOther(
+        newNumber,
+        _deviceId,
+      );
+      if (dbUsed) return false;
+    } catch (_) {}
+
+    _deviceNumber = newNumber;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(AppConstants.keyDeviceNumber, newNumber);
+    _sendAnnounce();
+    notifyListeners();
+    return true;
+  }
+
   // ============================================
   // === كشف IP المحلي ===
   // ============================================
 
   Future<String> _detectLocalIp() async {
     try {
-      // الطريقة الأكثر موثوقية: فتح اتصال وهمي واكتشاف العنوان المستخدم
       final interfaces = await NetworkInterface.list(
         type: InternetAddressType.IPv4,
         includeLoopback: false,
       );
 
-      // نبحث عن واجهة WiFi أولًا
       for (final iface in interfaces) {
         final name = iface.name.toLowerCase();
         if (name.contains('wlan') ||
@@ -214,7 +284,6 @@ class DeviceDiscovery extends ChangeNotifier {
         }
       }
 
-      // إن لم نجد، نأخذ أول عنوان خاص
       for (final iface in interfaces) {
         for (final addr in iface.addresses) {
           if (_isPrivateIp(addr.address)) return addr.address;
@@ -273,8 +342,8 @@ class DeviceDiscovery extends ChangeNotifier {
       final text = utf8.decode(datagram.data);
       final data = jsonDecode(text) as Map<String, dynamic>;
       _handleIncoming(data, datagram.address.address);
-    } catch (e) {
-      // حزمة غير صالحة — نتجاهلها
+    } catch (_) {
+      // حزمة غير صالحة — تجاهل
     }
   }
 
@@ -286,6 +355,7 @@ class DeviceDiscovery extends ChangeNotifier {
     _broadcast({
       'type': AppConstants.msgAnnounce,
       'deviceId': _deviceId,
+      'number': _deviceNumber, // ← جديد
       'name': _deviceName,
       'ip': _localIp,
       'port': AppConstants.signalingPort,
@@ -309,14 +379,12 @@ class DeviceDiscovery extends ChangeNotifier {
     try {
       final data = utf8.encode(jsonEncode(payload));
 
-      // بث على العنوان العام
       _udpSocket!.send(
         data,
         InternetAddress(AppConstants.broadcastAddress),
         AppConstants.discoveryPort,
       );
 
-      // بث على العنوان المتعدد (بعض الشبكات تحجب الأول)
       _udpSocket!.send(
         data,
         InternetAddress(AppConstants.multicastAddress),
@@ -339,7 +407,7 @@ class DeviceDiscovery extends ChangeNotifier {
     final deviceId = data['deviceId'] as String?;
     if (deviceId == null) return;
 
-    // تجاهل نبضاتنا نحن
+    // تجاهل نبضاتنا
     if (deviceId == _deviceId) return;
 
     switch (type) {
@@ -360,16 +428,43 @@ class DeviceDiscovery extends ChangeNotifier {
   ) async {
     final deviceId = data['deviceId'] as String;
     final name = (data['name'] as String?) ?? 'جهاز غير معروف';
-
-    // نستخدم IP الحقيقي من الحزمة (أدق من المُعلن)
+    final number = (data['number'] as String?) ?? '';
     final ip = sourceIp;
     final port = (data['port'] as int?) ?? AppConstants.signalingPort;
     final caps = (data['capabilities'] as List?)?.cast<String>() ?? const [];
 
+    // ============================================
+    // === كشف التعارض في الأرقام ===
+    // ============================================
+    if (number.isNotEmpty && number == _deviceNumber) {
+      // جهاز آخر يستخدم نفس رقمنا!
+      // القاعدة: مقارنة deviceId نصيًا. الأكبر يُعيد التوليد.
+      if (_deviceId.compareTo(deviceId) > 0) {
+        debugPrint(
+          '[Discovery] Number conflict! We ($_deviceId) regenerate, '
+          'peer ($deviceId) keeps $number',
+        );
+        // نحن الأكبر → نُعيد التوليد
+        await _regenerateNumber();
+        // لا نحفظ الجهاز الآخر برقمنا القديم الآن — سنستقبل نبضته القادمة
+      } else {
+        debugPrint(
+          '[Discovery] Number conflict! Peer ($deviceId) should regenerate, '
+          'we keep $number',
+        );
+      }
+    }
+
     final isNew = !_devices.containsKey(deviceId);
+
+    // احفظ الخريطة العكسية
+    if (number.isNotEmpty) {
+      _numberToDeviceId[number] = deviceId;
+    }
 
     final device = DiscoveredDevice(
       deviceId: deviceId,
+      number: number,
       name: name,
       ip: ip,
       port: port,
@@ -383,6 +478,7 @@ class DeviceDiscovery extends ChangeNotifier {
     // حفظ في قاعدة البيانات
     await DatabaseHelper.instance.upsertDevice({
       'device_id': deviceId,
+      'number': number,
       'name': name,
       'ip_address': ip,
       'port': port,
@@ -394,7 +490,7 @@ class DeviceDiscovery extends ChangeNotifier {
     });
 
     if (isNew) {
-      debugPrint('[Discovery] New device: $name @ $ip');
+      debugPrint('[Discovery] New device: $name (#$number) @ $ip');
     }
 
     notifyListeners();
@@ -402,10 +498,34 @@ class DeviceDiscovery extends ChangeNotifier {
 
   Future<void> _handleBye(String deviceId) async {
     if (_devices.containsKey(deviceId)) {
-      _devices[deviceId] = _devices[deviceId]!.copyWith(isOnline: false);
+      final old = _devices[deviceId]!;
+      // احذف الرقم من الخريطة العكسية
+      if (old.hasValidNumber) {
+        _numberToDeviceId.remove(old.number);
+      }
+      _devices[deviceId] = old.copyWith(isOnline: false);
       notifyListeners();
-      debugPrint('[Discovery] Device said bye: $deviceId');
     }
+  }
+
+  /// إعادة توليد الرقم عند التعارض
+  Future<void> _regenerateNumber() async {
+    // احذف رقمنا القديم من الخريطة العكسية
+    _numberToDeviceId.remove(_deviceNumber);
+
+    // ولّد رقمًا جديدًا
+    final newNumber = await _generateUniqueNumber();
+    _deviceNumber = newNumber;
+
+    // احفظ
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(AppConstants.keyDeviceNumber, newNumber);
+
+    debugPrint('[Discovery] New number: $newNumber');
+
+    // بثّ النبضة فورًا بالرقم الجديد
+    _sendAnnounce();
+    notifyListeners();
   }
 
   // ============================================
@@ -439,11 +559,13 @@ class DeviceDiscovery extends ChangeNotifier {
       final rows = await DatabaseHelper.instance.getAllDevices();
       for (final row in rows) {
         final id = row['device_id'] as String;
-        // لا نُحمّل جهازنا
         if (id == _deviceId) continue;
+
+        final number = (row['number'] as String?) ?? '';
 
         _devices[id] = DiscoveredDevice(
           deviceId: id,
+          number: number,
           name: row['name'] as String,
           ip: row['ip_address'] as String,
           port: row['port'] as int,
@@ -451,8 +573,13 @@ class DeviceDiscovery extends ChangeNotifier {
           lastSeen: DateTime.fromMillisecondsSinceEpoch(
             row['last_seen'] as int,
           ),
-          isOnline: false, // ننتظر نبضة للتأكيد
+          isOnline: false,
         );
+
+        // احفظ في الخريطة العكسية
+        if (number.isNotEmpty) {
+          _numberToDeviceId[number] = id;
+        }
       }
       debugPrint('[Discovery] Loaded ${_devices.length} stored devices');
       notifyListeners();
@@ -501,7 +628,6 @@ class DeviceDiscovery extends ChangeNotifier {
         await for (final txt in _mdnsClient!.lookup<TxtResourceRecord>(
           ResourceRecordQuery.text(serviceName),
         )) {
-          // نحاول استخراج deviceId من TXT
           final txtParts = txt.text.split(',');
           String? deviceId;
           for (final part in txtParts) {
@@ -509,8 +635,9 @@ class DeviceDiscovery extends ChangeNotifier {
           }
           if (deviceId == null || deviceId == _deviceId) return;
 
-          // mDNS وحده لا يكفي — سننتظر نبضة UDP لتأكيد الاتصال
-          debugPrint('[Discovery] mDNS resolved: $deviceId @ ${srv.target}:${srv.port}');
+          debugPrint(
+            '[Discovery] mDNS resolved: $deviceId @ ${srv.target}:${srv.port}',
+          );
         }
       }
     } catch (e) {
@@ -524,19 +651,41 @@ class DeviceDiscovery extends ChangeNotifier {
 
   DiscoveredDevice? getDevice(String deviceId) => _devices[deviceId];
 
+  /// البحث عن جهاز بالرقم
+  DiscoveredDevice? getDeviceByNumber(String number) {
+    final deviceId = _numberToDeviceId[number];
+    if (deviceId == null) return null;
+    return _devices[deviceId];
+  }
+
   bool isDeviceOnline(String deviceId) {
     final d = _devices[deviceId];
     return d != null && d.isOnline;
   }
 
-  /// إرسال نبضة فورية (للاستخدام عند فتح شاشة الأجهزة)
+  /// هل الرقم موجود بين الأجهزة المتصلة؟
+  bool isNumberOnline(String number) {
+    final device = getDeviceByNumber(number);
+    return device != null && device.isOnline;
+  }
+
+  /// كل الأرقام المستخدمة حاليًا (في الذاكرة)
+  Set<String> getUsedNumbers() {
+    return _devices.values
+        .where((d) => d.hasValidNumber)
+        .map((d) => d.number)
+        .toSet();
+  }
+
   void refreshNow() {
     _sendAnnounce();
   }
 
-  /// حذف جهاز يدويًا
   Future<void> removeDevice(String deviceId) async {
-    _devices.remove(deviceId);
+    final device = _devices.remove(deviceId);
+    if (device != null && device.hasValidNumber) {
+      _numberToDeviceId.remove(device.number);
+    }
     await DatabaseHelper.instance.deleteDevice(deviceId);
     notifyListeners();
   }
