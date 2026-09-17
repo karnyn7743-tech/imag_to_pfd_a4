@@ -6,6 +6,7 @@ import '../../core/discovery/device_discovery.dart';
 import '../../core/services/permission_service.dart';
 import '../theme/app_theme.dart';
 import 'dialer_screen.dart';
+import 'global_search_screen.dart';
 import 'qr_display_screen.dart';
 import 'qr_scanner_screen.dart';
 import 'settings_screen.dart';
@@ -72,10 +73,21 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   // ============================================
-  // === QR (جديد) ===
+  // === البحث العالمي (جديد) ===
   // ============================================
 
-  /// عرض قائمة خيارات QR
+  void _openGlobalSearch() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => const GlobalSearchScreen(),
+      ),
+    );
+  }
+
+  // ============================================
+  // === QR ===
+  // ============================================
+
   void _showQrOptions() {
     showModalBottomSheet(
       context: context,
@@ -95,7 +107,6 @@ class _HomeScreenState extends State<HomeScreen>
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // شريط السحب
               Container(
                 width: 40,
                 height: 4,
@@ -105,8 +116,6 @@ class _HomeScreenState extends State<HomeScreen>
                 ),
               ),
               const SizedBox(height: 20),
-
-              // العنوان
               const Text(
                 'الاقتران عبر QR',
                 style: TextStyle(
@@ -123,11 +132,8 @@ class _HomeScreenState extends State<HomeScreen>
                 ),
               ),
               const SizedBox(height: 24),
-
-              // الخيارات
               Row(
                 children: [
-                  // عرض رمزي
                   Expanded(
                     child: _QrOption(
                       icon: Icons.qr_code_2,
@@ -141,7 +147,6 @@ class _HomeScreenState extends State<HomeScreen>
                     ),
                   ),
                   const SizedBox(width: 12),
-                  // مسح رمز
                   Expanded(
                     child: _QrOption(
                       icon: Icons.qr_code_scanner,
@@ -171,22 +176,11 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Future<void> _openQrScanner() async {
-    // اطلب إذن الكاميرا
-    final granted = await PermissionService.requestAll(
-      [
-        // نستخدم الطلب العام
-      ],
-    );
-
-    if (!mounted) return;
-
     final result = await Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => const QrScannerScreen()),
     );
 
-    // إذا عاد بنتيجة (جهاز مضاف)
     if (result != null && mounted) {
-      // انتقل لتبويب الأجهزة ليراه المستخدم
       _tabController.animateTo(2);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -299,17 +293,25 @@ class _HomeScreenState extends State<HomeScreen>
           ],
         ),
         actions: [
+          // ✅ زر البحث العالمي (جديد)
+          IconButton(
+            icon: const Icon(Icons.search),
+            tooltip: 'البحث في الرسائل',
+            onPressed: _openGlobalSearch,
+          ),
+          // زر لوحة الاتصال
           IconButton(
             icon: const Icon(Icons.dialpad),
             tooltip: 'الاتصال برقم',
             onPressed: _openDialer,
           ),
-          // ✅ قائمة QR
+          // قائمة QR
           IconButton(
             icon: const Icon(Icons.qr_code_2),
             tooltip: 'الاقتران بـ QR',
             onPressed: _showQrOptions,
           ),
+          // الإعدادات
           IconButton(
             icon: const Icon(Icons.settings_outlined),
             tooltip: 'الإعدادات',
@@ -396,7 +398,6 @@ class _TabContent extends StatelessWidget {
   }
 }
 
-/// خيار QR في القائمة السفلية
 class _QrOption extends StatelessWidget {
   final IconData icon;
   final String label;
