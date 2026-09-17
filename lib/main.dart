@@ -14,6 +14,7 @@ import 'core/providers/theme_provider.dart';
 import 'core/rtc/rtc_service.dart';
 import 'core/services/app_lifecycle_service.dart';
 import 'core/services/local_notification_service.dart';
+import 'core/services/lock_service.dart';
 import 'core/services/notification_service.dart';
 import 'core/services/permission_service.dart';
 import 'core/services/ringtone_service.dart';
@@ -21,6 +22,7 @@ import 'core/signaling/signaling_service.dart';
 import 'data/database/database_helper.dart';
 import 'ui/screens/audio_call_screen.dart';
 import 'ui/screens/chat_screen.dart';
+import 'ui/screens/lock_screen.dart';
 import 'ui/screens/splash_screen.dart';
 import 'ui/screens/video_call_screen.dart';
 import 'ui/theme/app_theme.dart';
@@ -88,7 +90,7 @@ class LanPhoneApp extends StatelessWidget {
           create: (_) => ThemeProvider(),
         ),
 
-        // 2) ✅ خدمة الرنات
+        // 2) خدمة الرنات
         ChangeNotifierProvider<RingtoneService>(
           create: (_) => RingtoneService()..load(),
         ),
@@ -98,17 +100,22 @@ class LanPhoneApp extends StatelessWidget {
           create: (_) => AppLifecycleService(),
         ),
 
-        // 4) خدمة إشعارات Callkit
+        // 4) خدمة القفل بالبصمة (جديد)
+        ChangeNotifierProvider<LockService>(
+          create: (_) => LockService(),
+        ),
+
+        // 5) خدمة إشعارات Callkit
         ChangeNotifierProvider<NotificationService>(
           create: (_) => NotificationService(),
         ),
 
-        // 5) اكتشاف الأجهزة
+        // 6) اكتشاف الأجهزة
         ChangeNotifierProvider<DeviceDiscovery>(
           create: (_) => DeviceDiscovery()..start(),
         ),
 
-        // 6) Signaling
+        // 7) Signaling
         ChangeNotifierProxyProvider<DeviceDiscovery, SignalingService>(
           create: (_) => SignalingService()..start(),
           update: (_, discovery, signaling) {
@@ -117,7 +124,7 @@ class LanPhoneApp extends StatelessWidget {
           },
         ),
 
-        // 7) RTC
+        // 8) RTC
         ChangeNotifierProxyProvider2<SignalingService, NotificationService,
             RtcService>(
           create: (_) => RtcService(),
@@ -128,7 +135,7 @@ class LanPhoneApp extends StatelessWidget {
           },
         ),
 
-        // 8) الرسائل + الإشعارات + دورة الحياة
+        // 9) الرسائل + الإشعارات + دورة الحياة
         ChangeNotifierProxyProvider3<
             DeviceDiscovery,
             SignalingService,
@@ -229,7 +236,6 @@ class _AppRootState extends State<_AppRoot> {
   void _onRtcEvent(RtcEvent event) {
     switch (event.type) {
       case RtcEventType.incomingCall:
-        // ✅ Callkit يعرض الواجهة بنفسه
         debugPrint('[AppRoot] Incoming call — Callkit handles UI');
         break;
 
@@ -295,7 +301,41 @@ class _AppRootState extends State<_AppRoot> {
         GlobalWidgetsLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,
       ],
+
+      // ✅ شاشة القفل تُعرض فوق كل شيء عند الحاجة
+      builder: (context, child) {
+        return _LockGate(child: child ?? const SizedBox.shrink());
+      },
+
       home: const SplashScreen(),
+    );
+  }
+}
+
+// ============================================================
+// === بوابة القفل ===
+// ============================================================
+class _LockGate extends StatelessWidget {
+  final Widget child;
+
+  const _LockGate({required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    // ✅ راقب حالة القفل
+    final isLocked = context.select<LockService, bool>(
+      (s) => s.isLocked,
+    );
+
+    // إذا كان مقفلًا، اعرض شاشة القفل فوق التطبيق
+    return Stack(
+      children: [
+        child,
+        if (isLocked)
+          const Positioned.fill(
+            child: LockScreen(),
+          ),
+      ],
     );
   }
 }
