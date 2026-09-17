@@ -34,9 +34,11 @@ class MessageService extends ChangeNotifier {
 
     _msgSub?.cancel();
     _msgSub = _signaling!.messages.listen(_onSignalingMessage);
+
+    // ✅ حمّل قائمة المحظورين عند البدء
+    refreshBlockedDevices();
   }
 
-  /// ✅ ربط خدمة دورة الحياة
   void attachLifecycle(AppLifecycleService lifecycle) {
     _lifecycle = lifecycle;
   }
@@ -52,6 +54,28 @@ class MessageService extends ChangeNotifier {
   Map<String, double> get transfers => Map.unmodifiable(_transfers);
 
   // ============================================
+  // === الأجهزة المحظورة (cache) ===
+  // ============================================
+  Set<String> _blockedDeviceIds = {};
+  Set<String> get blockedDeviceIds => _blockedDeviceIds;
+
+  Future<void> refreshBlockedDevices() async {
+    try {
+      _blockedDeviceIds =
+          await DatabaseHelper.instance.getBlockedDeviceIds();
+      debugPrint(
+        '[Messages] Blocked devices loaded: ${_blockedDeviceIds.length}',
+      );
+      notifyListeners();
+    } catch (e) {
+      debugPrint('[Messages] refreshBlocked error: $e');
+    }
+  }
+
+  bool isDeviceBlocked(String deviceId) =>
+      _blockedDeviceIds.contains(deviceId);
+
+  // ============================================
   // === إرسال ===
   // ============================================
 
@@ -62,6 +86,11 @@ class MessageService extends ChangeNotifier {
   }) async {
     if (body.trim().isEmpty) {
       return MessageResult.failure('الرسالة فارغة');
+    }
+
+    // ✅ امنع الإرسال لجهاز محظور
+    if (_blockedDeviceIds.contains(peerDeviceId)) {
+      return MessageResult.failure('لا يمكن المراسلة مع جهاز محظور');
     }
 
     if (body.length > AppConstants.maxTextMessageLength) {
@@ -118,6 +147,11 @@ class MessageService extends ChangeNotifier {
     String? caption,
     String? replyToId,
   }) async {
+    // ✅ امنع الإرسال لجهاز محظور
+    if (_blockedDeviceIds.contains(peerDeviceId)) {
+      return MessageResult.failure('لا يمكن المراسلة مع جهاز محظور');
+    }
+
     final file = File(filePath);
     if (!await file.exists()) {
       return MessageResult.failure('الملف غير موجود');
@@ -255,6 +289,14 @@ class MessageService extends ChangeNotifier {
   }
 
   Future<void> _handleIncomingMessage(SignalingMessage msg) async {
+    // ✅ تجاهل الرسائل من الأجهزة المحظورة
+    if (_blockedDeviceIds.contains(msg.from)) {
+      debugPrint(
+        '[Messages] Ignored message from blocked device: ${msg.from}',
+      );
+      return;
+    }
+
     final msgId = msg.payload['msgId'] as String?;
     final msgType = msg.payload['msgType'] as String? ??
         AppConstants.mediaText;
@@ -293,7 +335,6 @@ class MessageService extends ChangeNotifier {
         peerDeviceId: msg.from,
       ));
 
-      // ✅ أطلق إشعارًا للرسالة النصية
       await _maybeNotify(
         peerDeviceId: msg.from,
         messageId: msgId,
@@ -322,6 +363,13 @@ class MessageService extends ChangeNotifier {
 
     final media = _incomingMedia[msgId];
     if (media == null) return;
+
+    // ✅ تجاهل قطع الملفات من المحظورين
+    if (_blockedDeviceIds.contains(media.from)) {
+      debugPrint('[Messages] Ignored chunk from blocked device');
+      _incomingMedia.remove(msgId);
+      return;
+    }
 
     try {
       final data = base64Decode(msg.payload['data'] as String);
@@ -389,7 +437,6 @@ class MessageService extends ChangeNotifier {
         peerDeviceId: media.from,
       ));
 
-      // ✅ أطلق إشعارًا للوسائط
       await _maybeNotify(
         peerDeviceId: media.from,
         messageId: media.messageId,
@@ -401,17 +448,15 @@ class MessageService extends ChangeNotifier {
   }
 
   // ============================================
-  // === إطلاق الإشعارات (جديد) ===
+  // === الإشعارات ===
   // ============================================
 
-  /// أطلق إشعارًا إذا كانت الشروط مناسبة
   Future<void> _maybeNotify({
     required String peerDeviceId,
     required String messageId,
     required String body,
   }) async {
     try {
-      // 1) إذا التطبيق في المقدمة والمحادثة مفتوحة → لا إشعار
       if (_lifecycle != null &&
           _lifecycle!.isInForeground &&
           _lifecycle!.isChatOpen(peerDeviceId)) {
@@ -419,14 +464,9 @@ class MessageService extends ChangeNotifier {
         return;
       }
 
-      // 2) احصل على معلومات الجهاز
       final peer = _discovery?.getDevice(peerDeviceId);
-      if (peer == null) {
-        debugPrint('[Messages] Peer not found for notification');
-        return;
-      }
+      if (peer == null) return;
 
-      // 3) اعرض الإشعار
       await LocalNotificationService.instance.showMessageNotification(
         peerDeviceId: peerDeviceId,
         peerName: peer.name,
@@ -521,7 +561,6 @@ class MessageService extends ChangeNotifier {
 
     await DatabaseHelper.instance.resetUnread(conversationId);
 
-    // ✅ ألغِ إشعار هذه المحادثة
     await LocalNotificationService.instance
         .cancelForDevice(peerDeviceId);
 
