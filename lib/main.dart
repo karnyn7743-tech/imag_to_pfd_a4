@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 import 'core/constants.dart';
 import 'core/discovery/device_discovery.dart';
 import 'core/messaging/message_service.dart';
+import 'core/providers/theme_provider.dart';
 import 'core/rtc/rtc_service.dart';
 import 'core/services/permission_service.dart';
 import 'core/signaling/signaling_service.dart';
@@ -18,34 +19,27 @@ import 'ui/theme/app_theme.dart';
 
 // ============================================================
 // === مفتاح التنقل العام ===
-// يُستخدم للتنقل من خارج شجرة الواجهة (مثل: فتح شاشة مكالمة
-// واردة من مستمع Stream)
 // ============================================================
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 // ============================================================
-// === نقطة الدخول الرئيسية ===
+// === نقطة الدخول ===
 // ============================================================
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // قفل اتجاه الشاشة عموديًا افتراضيًا
   await SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
   ]);
 
-  // --------------------------------------------------------
   // 1) تهيئة قاعدة البيانات
-  // --------------------------------------------------------
   try {
     await DatabaseHelper.instance.init();
   } catch (e) {
     debugPrint('[main] Database init error: $e');
   }
 
-  // --------------------------------------------------------
-  // 2) طلب الأذونات الأساسية (الاكتشاف + الإشعارات)
-  // --------------------------------------------------------
+  // 2) طلب الأذونات الأساسية
   try {
     await PermissionService.requestEssentialAtStartup();
   } catch (e) {
@@ -66,15 +60,22 @@ class LanPhoneApp extends StatelessWidget {
     return MultiProvider(
       providers: [
         // ==========================================
-        // === خدمات التطبيق الأساسية ===
+        // === 1) مزوّد الثيم (يبدأ أولًا) ===
         // ==========================================
+        ChangeNotifierProvider<ThemeProvider>(
+          create: (_) => ThemeProvider(),
+        ),
 
-        // 1) خدمة اكتشاف الأجهزة على الشبكة المحلية
+        // ==========================================
+        // === 2) خدمة اكتشاف الأجهزة ===
+        // ==========================================
         ChangeNotifierProvider<DeviceDiscovery>(
           create: (_) => DeviceDiscovery()..start(),
         ),
 
-        // 2) خدمة التحكم (Signaling) عبر WebSocket
+        // ==========================================
+        // === 3) خدمة التحكم (Signaling) ===
+        // ==========================================
         ChangeNotifierProxyProvider<DeviceDiscovery, SignalingService>(
           create: (_) => SignalingService()..start(),
           update: (_, discovery, signaling) {
@@ -83,7 +84,9 @@ class LanPhoneApp extends StatelessWidget {
           },
         ),
 
-        // 3) خدمة WebRTC (الصوت والفيديو)
+        // ==========================================
+        // === 4) خدمة WebRTC ===
+        // ==========================================
         ChangeNotifierProxyProvider<SignalingService, RtcService>(
           create: (_) => RtcService(),
           update: (_, signaling, rtc) {
@@ -92,7 +95,9 @@ class LanPhoneApp extends StatelessWidget {
           },
         ),
 
-        // 4) خدمة الرسائل والوسائط
+        // ==========================================
+        // === 5) خدمة الرسائل والوسائط ===
+        // ==========================================
         ChangeNotifierProxyProvider2<DeviceDiscovery, SignalingService,
             MessageService>(
           create: (_) => MessageService(),
@@ -108,7 +113,7 @@ class LanPhoneApp extends StatelessWidget {
 }
 
 // ============================================================
-// === جذر التطبيق (يحتوي على MaterialApp ومستمع المكالمات) ===
+// === جذر التطبيق ===
 // ============================================================
 class _AppRoot extends StatefulWidget {
   const _AppRoot();
@@ -120,15 +125,12 @@ class _AppRoot extends StatefulWidget {
 class _AppRootState extends State<_AppRoot> {
   StreamSubscription<RtcEvent>? _rtcSub;
   RtcService? _rtc;
-
-  // راقب شاشة المكالمة الواردة الحالية لمنع تكرار فتحها
   bool _incomingScreenOpen = false;
 
   @override
   void initState() {
     super.initState();
 
-    // تأخير بسيط حتى تكتمل تهيئة الـ Providers
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _setupRtcListener();
     });
@@ -146,7 +148,6 @@ class _AppRootState extends State<_AppRoot> {
 
   void _setupRtcListener() {
     if (!mounted) return;
-
     _rtc = context.read<RtcService>();
     _rtcSub = _rtc!.events.listen(_onRtcEvent);
   }
@@ -156,23 +157,15 @@ class _AppRootState extends State<_AppRoot> {
       case RtcEventType.incomingCall:
         _openIncomingCallScreen(event);
         break;
-
       case RtcEventType.callEnded:
-        // إذا كانت شاشة المكالمة الواردة مفتوحة، دعها تُغلق نفسها
         _incomingScreenOpen = false;
         break;
-
       default:
         break;
     }
   }
 
-  // ============================================
-  // === فتح شاشة المكالمة الواردة ===
-  // ============================================
-
   void _openIncomingCallScreen(RtcEvent event) {
-    // منع فتح نسختين
     if (_incomingScreenOpen) return;
 
     final nav = navigatorKey.currentState;
@@ -195,7 +188,6 @@ class _AppRootState extends State<_AppRoot> {
       ),
     )
         .then((_) {
-      // عند إغلاق الشاشة، نُفرِّغ العلم
       _incomingScreenOpen = false;
     });
   }
@@ -206,32 +198,30 @@ class _AppRootState extends State<_AppRoot> {
 
   @override
   Widget build(BuildContext context) {
+    // ✅ استمع لتغيّر الثيم
+    final themeMode = context.watch<ThemeProvider>().themeMode;
+
     return MaterialApp(
       title: AppConstants.appName,
       debugShowCheckedModeBanner: false,
 
-      // مفتاح التنقل العالمي
       navigatorKey: navigatorKey,
 
       // ==========================================
-      // === الثيم ===
+      // === الثيم (فوري) ===
       // ==========================================
       theme: AppTheme.light,
       darkTheme: AppTheme.dark,
-      themeMode: ThemeMode.system,
+      themeMode: themeMode, // ← ديناميكي من ThemeProvider
 
       // ==========================================
-      // === اللغة ===
+      // === اللغة والتوطين ===
       // ==========================================
       locale: const Locale('ar'),
       supportedLocales: const [
         Locale('ar'),
         Locale('en'),
       ],
-
-      // ==========================================
-      // === دعم التوطين (localizations) ===
-      // ==========================================
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,
@@ -239,7 +229,7 @@ class _AppRootState extends State<_AppRoot> {
       ],
 
       // ==========================================
-      // === الشاشة الافتتاحية ===
+      // === نقطة البداية ===
       // ==========================================
       home: const SplashScreen(),
     );
