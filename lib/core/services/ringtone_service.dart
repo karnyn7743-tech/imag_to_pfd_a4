@@ -6,16 +6,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// أنواع الرنات المتاحة
 /// ============================================================
 enum RingtoneType {
-  /// نغمة المكالمات الافتراضية للنظام
   ringtone,
-
-  /// نغمة المنبه
   alarm,
-
-  /// نغمة الإشعار
   notification,
-
-  /// صامت تمامًا
   silent,
 }
 
@@ -62,15 +55,10 @@ extension RingtoneTypeExt on RingtoneType {
 
 /// ============================================================
 /// خدمة الرنات
-/// ------------------------------------------------
-/// تدير اختيار نوع الرنين وتشغيله/إيقافه
 /// ============================================================
 class RingtoneService extends ChangeNotifier {
-  // ============================================
-  // === Singleton ===
-  // ============================================
-  RingtoneService._internal();
-  static final RingtoneService instance = RingtoneService._internal();
+  // ✅ مُنشئ عام (للتسجيل مع Provider)
+  RingtoneService();
 
   static const String _keyRingtoneType = 'ringtone_type';
 
@@ -110,7 +98,6 @@ class RingtoneService extends ChangeNotifier {
     notifyListeners();
 
     try {
-      // أوقف أي تشغيل حالي
       await FlutterRingtonePlayer().stop();
       _isPlaying = false;
 
@@ -126,10 +113,8 @@ class RingtoneService extends ChangeNotifier {
   // === المعاينة ===
   // ============================================
 
-  /// معاينة قصيرة (تشغيل مرة واحدة)
   Future<void> preview(RingtoneType type) async {
     try {
-      // أوقف أي تشغيل سابق
       await FlutterRingtonePlayer().stop();
 
       switch (type) {
@@ -151,7 +136,6 @@ class RingtoneService extends ChangeNotifier {
           );
           break;
         case RingtoneType.silent:
-          // لا شيء
           break;
       }
     } catch (e) {
@@ -163,7 +147,6 @@ class RingtoneService extends ChangeNotifier {
   // === الرنين للمكالمات ===
   // ============================================
 
-  /// بدء الرنين (للمكالمات الواردة)
   Future<void> startRinging() async {
     if (_type == RingtoneType.silent) {
       debugPrint('[Ringtone] Silent — no ring');
@@ -200,7 +183,6 @@ class RingtoneService extends ChangeNotifier {
     }
   }
 
-  /// إيقاف الرنين
   Future<void> stopRinging() async {
     try {
       await FlutterRingtonePlayer().stop();
@@ -212,26 +194,7 @@ class RingtoneService extends ChangeNotifier {
   }
 
   // ============================================
-  // === نغمة الرنين للـ Callkit ===
-  // ============================================
-
-  /// إرجاع اسم نغمة النظام لـ Callkit
-  /// (Callkit يدعم فقط نغمات النظام الرسمية)
-  String get callkitRingtonePath {
-    switch (_type) {
-      case RingtoneType.ringtone:
-        return 'system_ringtone_default';
-      case RingtoneType.alarm:
-        return 'system_ringtone_default'; // Callkit لا يدعم alarm
-      case RingtoneType.notification:
-        return 'system_ringtone_default';
-      case RingtoneType.silent:
-        return 'system_ringtone_default';
-    }
-  }
-
-  // ============================================
-  // === أدوات داخلية ===
+  // === أدوات ===
   // ============================================
 
   RingtoneType _fromString(String s) {
