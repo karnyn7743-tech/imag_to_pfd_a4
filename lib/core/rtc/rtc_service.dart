@@ -64,7 +64,6 @@ class RtcService extends ChangeNotifier {
   DateTime? _callStartedAt;
   DateTime? get callStartedAt => _callStartedAt;
 
-  /// وقت بدء تسجيل السجل (يختلف عن _callStartedAt)
   DateTime? _callLogStartTime;
 
   int get callDurationSeconds {
@@ -103,7 +102,7 @@ class RtcService extends ChangeNotifier {
   final List<RTCIceCandidate> _pendingCandidates = [];
 
   // ============================================
-  // === إعدادات ===
+  // === الإعدادات ===
   // ============================================
   final Map<String, dynamic> _iceServers = const {
     'iceServers': <Map<String, dynamic>>[],
@@ -167,6 +166,18 @@ class RtcService extends ChangeNotifier {
       return false;
     }
 
+    // ✅ تحقق من الحظر
+    try {
+      final blocked =
+          await DatabaseHelper.instance.isDeviceBlocked(peerDeviceId);
+      if (blocked) {
+        debugPrint('[RTC] Cannot call blocked device: $peerDeviceId');
+        return false;
+      }
+    } catch (e) {
+      debugPrint('[RTC] block check error: $e');
+    }
+
     _currentCallId = _generateCallId();
     _peerDeviceId = peerDeviceId;
     _peerName = peerName;
@@ -177,7 +188,6 @@ class RtcService extends ChangeNotifier {
     _callLogStartTime = DateTime.now();
     notifyListeners();
 
-    // ✅ تسجيل بدء المكالمة الصادرة
     await _logCallStart(direction: AppConstants.callDirectionOutgoing);
 
     try {
@@ -204,7 +214,6 @@ class RtcService extends ChangeNotifier {
       return true;
     } catch (e) {
       debugPrint('[RTC] startCall error: $e');
-      // ✅ سجّل الفشل
       await _saveCallLogEnd(state: AppConstants.callStateDeclined);
       await _cleanup();
       _callState = AppConstants.callStateIdle;
@@ -214,7 +223,7 @@ class RtcService extends ChangeNotifier {
   }
 
   // ============================================
-  // === استقبال مكالمة واردة ===
+  // === استقبال مكالمة ===
   // ============================================
 
   Future<void> _handleIncomingCall(SignalingMessage msg) async {
@@ -224,6 +233,24 @@ class RtcService extends ChangeNotifier {
         'callId': msg.payload['callId'],
       });
       return;
+    }
+
+    // ✅ ارفض المكالمة من جهاز محظور
+    try {
+      final blocked =
+          await DatabaseHelper.instance.isDeviceBlocked(msg.from);
+      if (blocked) {
+        debugPrint(
+          '[RTC] Rejected call from blocked device: ${msg.from}',
+        );
+        await _signaling?.sendTo(msg.from, {
+          'type': AppConstants.msgCallBusy,
+          'callId': msg.payload['callId'],
+        });
+        return;
+      }
+    } catch (e) {
+      debugPrint('[RTC] block check error: $e');
     }
 
     _currentCallId = msg.payload['callId'] as String;
@@ -237,10 +264,8 @@ class RtcService extends ChangeNotifier {
     _callLogStartTime = DateTime.now();
     notifyListeners();
 
-    // ✅ تسجيل المكالمة الواردة
     await _logCallStart(direction: AppConstants.callDirectionIncoming);
 
-    // عرض Callkit
     await _showCallkitIncoming();
 
     _eventController.add(RtcEvent(
@@ -322,7 +347,7 @@ class RtcService extends ChangeNotifier {
   }
 
   // ============================================
-  // === معالجة أحداث Callkit ===
+  // === أحداث Callkit ===
   // ============================================
 
   Future<void> _onCallkitEvent(CallEvent? event) async {
@@ -372,8 +397,6 @@ class RtcService extends ChangeNotifier {
 
   Future<void> _onCallkitTimeout() async {
     if (_callState != AppConstants.callStateRinging) return;
-    debugPrint('[RTC] Callkit timeout');
-    // ✅ سجّل كـ "فائتة"
     await _saveCallLogEnd(state: AppConstants.callStateMissed);
     await _cleanup();
     _resetState();
@@ -426,7 +449,6 @@ class RtcService extends ChangeNotifier {
     _callState = AppConstants.callStateDeclined;
     notifyListeners();
 
-    // ✅ سجّل الرفض
     await _saveCallLogEnd(state: AppConstants.callStateDeclined);
     await _dismissCallkit();
     await _cleanup();
@@ -488,7 +510,6 @@ class RtcService extends ChangeNotifier {
     ));
     notifyListeners();
 
-    // ✅ سجّل الرفض
     await _saveCallLogEnd(state: AppConstants.callStateDeclined);
     await _dismissCallkit();
     await _cleanup();
@@ -509,7 +530,6 @@ class RtcService extends ChangeNotifier {
     ));
     notifyListeners();
 
-    // ✅ سجّل "مشغول" كـ declined
     await _saveCallLogEnd(state: AppConstants.callStateDeclined);
     await _dismissCallkit();
     await _cleanup();
@@ -528,7 +548,6 @@ class RtcService extends ChangeNotifier {
       reason: 'ended',
     ));
 
-    // ✅ الحالة النهائية حسب هل تم الاتصال أم لا
     final finalState = _callStartedAt == null
         ? AppConstants.callStateMissed
         : AppConstants.callStateEnded;
@@ -670,7 +689,6 @@ class RtcService extends ChangeNotifier {
         case RTCPeerConnectionState.RTCPeerConnectionStateConnected:
           _callState = AppConstants.callStateConnected;
           _callStartedAt ??= DateTime.now();
-          // ✅ حدّث السجل إلى "متصل"
           _updateCallLogState(AppConstants.callStateConnected);
           notifyListeners();
           break;
@@ -774,10 +792,8 @@ class RtcService extends ChangeNotifier {
   Future<void> endCall({String reason = 'user-hangup'}) async {
     if (!isInCall) return;
 
-    // ✅ حدّد الحالة النهائية
     String finalState;
     if (_callStartedAt != null) {
-      // كانت هناك مكالمة فعلية
       finalState = AppConstants.callStateEnded;
     } else if (reason == 'disconnected' || reason == 'ice-failed') {
       finalState = AppConstants.callStateDeclined;
@@ -785,7 +801,6 @@ class RtcService extends ChangeNotifier {
       finalState = AppConstants.callStateMissed;
     }
 
-    // ✅ سجّل قبل إبلاغ الطرف الآخر
     await _saveCallLogEnd(state: finalState);
 
     if (_signaling != null && _peerDeviceId.isNotEmpty) {
@@ -814,10 +829,9 @@ class RtcService extends ChangeNotifier {
   }
 
   // ============================================
-  // === تسجيل المكالمات في قاعدة البيانات ===
+  // === تسجيل المكالمات ===
   // ============================================
 
-  /// ✅ تسجيل بدء مكالمة جديدة (صادرة أو واردة)
   Future<void> _logCallStart({required String direction}) async {
     try {
       await DatabaseHelper.instance.insertCallLog({
@@ -831,13 +845,11 @@ class RtcService extends ChangeNotifier {
             DateTime.now().millisecondsSinceEpoch,
         'duration_seconds': 0,
       });
-      debugPrint('[RTC] Call logged: $_currentCallId ($direction)');
     } catch (e) {
       debugPrint('[RTC] logCallStart error: $e');
     }
   }
 
-  /// ✅ تحديث حالة السجل (مثلاً من ringing → connected)
   Future<void> _updateCallLogState(String state) async {
     try {
       await DatabaseHelper.instance.updateCallLog(
@@ -851,10 +863,8 @@ class RtcService extends ChangeNotifier {
     }
   }
 
-  /// ✅ إنهاء السجل مع تسجيل المدة والحالة النهائية
   Future<void> _saveCallLogEnd({required String state}) async {
     if (_currentCallId.isEmpty) return;
-
     try {
       final endTime = DateTime.now();
       final duration = _callStartedAt != null
@@ -866,11 +876,6 @@ class RtcService extends ChangeNotifier {
         state: state,
         endedAt: endTime.millisecondsSinceEpoch,
         durationSeconds: duration,
-      );
-
-      debugPrint(
-        '[RTC] Call log ended: $_currentCallId, '
-        'state=$state, duration=${duration}s',
       );
     } catch (e) {
       debugPrint('[RTC] saveCallLogEnd error: $e');
