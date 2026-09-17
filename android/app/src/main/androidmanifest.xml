@@ -10,50 +10,65 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
-    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" android:usesPermissionFlags="neverForLocation" tools:targetApi="tiramisu" />
+    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES"
+        android:usesPermissionFlags="neverForLocation"
+        tools:targetApi="tiramisu" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.CAMERA" />
-    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
-    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" tools:targetApi="s" />
+    <uses-permission android:name="android.permission.BLUETOOTH"
+        android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"
+        tools:targetApi="s" />
 
-    <!-- === أذونات المكالمات (جديدة/محدثة) === -->
+    <!-- === المكالمات في الخلفية === -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.DISABLE_KEYGUARD" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" tools:targetApi="q" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" tools:targetApi="q" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" tools:targetApi="q" />
-    <!-- ✅ إذن أساسي لعمل المكالمات على Android 14+ -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" tools:targetApi="34" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"
+        tools:targetApi="q" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA"
+        tools:targetApi="q" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE"
+        tools:targetApi="q" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL"
+        tools:targetApi="34" />
+
+    <!-- ============================================================ -->
+    <!-- === تعطيل تحسين البطارية (جديد) ===                          -->
+    <!-- ============================================================ -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <!-- === الإشعارات === -->
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" tools:targetApi="tiramisu" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"
+        tools:targetApi="tiramisu" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
 
     <!-- === الملفات والوسائط === -->
-    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" tools:targetApi="tiramisu" />
-    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" tools:targetApi="tiramisu" />
-    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" tools:targetApi="tiramisu" />
-    <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" tools:targetApi="upside_down_cake" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"
+        tools:targetApi="tiramisu" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"
+        tools:targetApi="tiramisu" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO"
+        tools:targetApi="tiramisu" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED"
+        tools:targetApi="upside_down_cake" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
 
-    <!-- ============================================================ -->
-    <!-- === ميزات الأجهزة ===                                         -->
-    <!-- ============================================================ -->
+    <!-- === ميزات الأجهزة === -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="true" />
     <uses-feature android:name="android.hardware.wifi" android:required="true" />
 
-    <!-- ============================================================ -->
-    <!-- === Queries (Android 11+) ===                                -->
-    <!-- ============================================================ -->
+    <!-- === Queries (Android 11+) === -->
     <queries>
         <intent><action android:name="android.media.action.IMAGE_CAPTURE" /></intent>
         <intent><action android:name="android.intent.action.GET_CONTENT" /></intent>
@@ -62,9 +77,7 @@
         <intent><action android:name="android.intent.action.VIEW" /><data android:scheme="https" /></intent>
     </queries>
 
-    <!-- ============================================================ -->
-    <!-- === صلاحية مخصصة للحزمة ===                                  -->
-    <!-- ============================================================ -->
+    <!-- === صلاحية مخصصة للحزمة === -->
     <permission
         android:name="com.lanphone.app.PERMISSION_CALL"
         android:protectionLevel="normal" />
@@ -111,9 +124,7 @@
             android:name="flutterEmbedding"
             android:value="2" />
 
-        <!-- ============================================================ -->
-        <!-- === مكونات flutter_callkit_incoming (تُدمج تلقائيًا) ===     -->
-        <!-- ============================================================ -->
+        <!-- === مكونات flutter_callkit_incoming === -->
         <activity
             android:name="com.hiennv.flutter_callkit_incoming.CallkitIncomingActivity"
             android:taskAffinity="com.hiennv.flutter_callkit_incoming.INCOMING_CALL_AFFINITY"
@@ -153,7 +164,7 @@
             </intent-filter>
         </service>
 
-        <!-- === مستقبلات الإشعارات الأخرى === -->
+        <!-- === مستقبلات الإشعارات === -->
         <receiver android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver" android:exported="false" />
         <receiver android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver" android:exported="false">
             <intent-filter>
