@@ -15,6 +15,7 @@ import '../theme/app_theme.dart';
 import '../widgets/permission_dialog.dart';
 import 'audio_call_screen.dart';
 import 'chat_screen.dart';
+import 'notification_settings_screen.dart';
 import 'video_call_screen.dart';
 
 /// ============================================================
@@ -39,6 +40,7 @@ class _DeviceInfoScreenState extends State<DeviceInfoScreen> {
   int? _firstSeen;
   bool _isFavorite = false;
   bool _isBlocked = false;
+  bool _notifEnabled = true;
 
   // ============================================
   // === دورة الحياة ===
@@ -63,6 +65,10 @@ class _DeviceInfoScreenState extends State<DeviceInfoScreen> {
         db.isDeviceBlocked(deviceId),
       ]);
 
+      // ✅ احصل على إعدادات الإشعارات
+      final notifSettings =
+          await db.getNotificationSettings(deviceId);
+
       if (!mounted) return;
       setState(() {
         _messageCount = results[0] as int;
@@ -70,6 +76,7 @@ class _DeviceInfoScreenState extends State<DeviceInfoScreen> {
         _firstSeen = results[2] as int?;
         _isFavorite = results[3] as bool;
         _isBlocked = results[4] as bool;
+        _notifEnabled = (notifSettings['enabled'] as int?) == 1;
         _isLoading = false;
       });
     } catch (e) {
@@ -135,6 +142,23 @@ class _DeviceInfoScreenState extends State<DeviceInfoScreen> {
   }
 
   // ============================================
+  // === إعدادات الإشعارات (جديد) ===
+  // ============================================
+
+  Future<void> _openNotificationSettings() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => NotificationSettingsScreen(
+          device: widget.device,
+        ),
+      ),
+    );
+
+    // أعد تحميل الإحصائيات (قد تغيّرت إعدادات الإشعارات)
+    await _loadStats();
+  }
+
+  // ============================================
   // === تعديل الاسم ===
   // ============================================
 
@@ -171,12 +195,13 @@ class _DeviceInfoScreenState extends State<DeviceInfoScreen> {
 
     controller.dispose();
 
-    if (newName == null || newName.isEmpty || newName == widget.device.name) {
+    if (newName == null ||
+        newName.isEmpty ||
+        newName == widget.device.name) {
       return;
     }
 
     try {
-      // 1) حدّث في DB
       await DatabaseHelper.instance.updateDeviceName(
         widget.device.deviceId,
         newName,
@@ -262,13 +287,9 @@ class _DeviceInfoScreenState extends State<DeviceInfoScreen> {
       );
 
       if (!mounted) return;
-      await context
-          .read<MessageService>()
-          .refreshBlockedDevices();
+      await context.read<MessageService>().refreshBlockedDevices();
       if (!mounted) return;
-      await context
-          .read<SignalingService>()
-          .refreshBlockedDevices();
+      await context.read<SignalingService>().refreshBlockedDevices();
 
       if (!mounted) return;
       HapticFeedback.mediumImpact();
@@ -324,8 +345,6 @@ class _DeviceInfoScreenState extends State<DeviceInfoScreen> {
 
       if (!mounted) return;
       HapticFeedback.mediumImpact();
-
-      // ارجع للشاشة السابقة
       Navigator.of(context).pop();
 
       if (!mounted) return;
@@ -377,43 +396,19 @@ class _DeviceInfoScreenState extends State<DeviceInfoScreen> {
       ),
       body: ListView(
         children: [
-          // ============================================
-          // === الرأس ===
-          // ============================================
           _buildHeader(isOnline),
           const SizedBox(height: 8),
-
-          // ============================================
-          // === أزرار الاتصال ===
-          // ============================================
           if (isOnline) _buildCallButtons(),
-
-          // ============================================
-          // === معلومات الشبكة ===
-          // ============================================
           const _SectionTitle(title: 'معلومات الشبكة'),
           _buildNetworkSection(isDark),
-
-          // ============================================
-          // === الإحصائيات ===
-          // ============================================
           if (!_isLoading) ...[
             const _SectionTitle(title: 'الإحصائيات'),
             _buildStatsSection(isDark),
           ],
-
-          // ============================================
-          // === القدرات ===
-          // ============================================
           const _SectionTitle(title: 'القدرات'),
           _buildCapabilitiesSection(isDark),
-
-          // ============================================
-          // === الإجراءات ===
-          // ============================================
           const _SectionTitle(title: 'الإجراءات'),
           _buildActionsSection(isDark),
-
           const SizedBox(height: 32),
         ],
       ),
@@ -429,7 +424,6 @@ class _DeviceInfoScreenState extends State<DeviceInfoScreen> {
       padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 20),
       child: Column(
         children: [
-          // الأفاتار
           Stack(
             children: [
               Container(
@@ -517,8 +511,6 @@ class _DeviceInfoScreenState extends State<DeviceInfoScreen> {
             ],
           ),
           const SizedBox(height: 16),
-
-          // الاسم
           Text(
             widget.device.name,
             style: const TextStyle(
@@ -527,8 +519,6 @@ class _DeviceInfoScreenState extends State<DeviceInfoScreen> {
             ),
             textAlign: TextAlign.center,
           ),
-
-          // الرقم
           if (widget.device.hasValidNumber) ...[
             const SizedBox(height: 6),
             Container(
@@ -552,10 +542,7 @@ class _DeviceInfoScreenState extends State<DeviceInfoScreen> {
               ),
             ),
           ],
-
           const SizedBox(height: 12),
-
-          // حالة الاتصال
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
@@ -563,8 +550,7 @@ class _DeviceInfoScreenState extends State<DeviceInfoScreen> {
                 width: 10,
                 height: 10,
                 decoration: BoxDecoration(
-                  color:
-                      isOnline ? AppTheme.successColor : Colors.grey,
+                  color: isOnline ? AppTheme.successColor : Colors.grey,
                   shape: BoxShape.circle,
                 ),
               ),
@@ -731,6 +717,19 @@ class _DeviceInfoScreenState extends State<DeviceInfoScreen> {
           label: 'فتح المحادثة',
           subtitle: 'عرض الرسائل المُتبادلة',
           onTap: _openChat,
+        ),
+
+        // ✅ إعدادات الإشعارات (جديد)
+        _ActionTile(
+          icon: _notifEnabled
+              ? Icons.notifications_active_outlined
+              : Icons.notifications_off_outlined,
+          label: 'إعدادات الإشعارات',
+          subtitle: _notifEnabled
+              ? 'الإشعارات مفعّلة — اضغط للتخصيص'
+              : 'الإشعارات متوقفة',
+          color: _notifEnabled ? null : AppTheme.warningColor,
+          onTap: _openNotificationSettings,
         ),
 
         // تعديل الاسم
