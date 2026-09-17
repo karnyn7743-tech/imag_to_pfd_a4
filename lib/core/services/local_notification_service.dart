@@ -5,11 +5,13 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
+import '../../data/database/database_helper.dart';
+
 /// ============================================================
 /// خدمة الإشعارات المحلية
 /// ------------------------------------------------
-/// تعرض إشعارات للرسائل الجديدة والتنبيهات
-/// وتفتح المحادثة عند الضغط على الإشعار
+/// تعرض إشعارات للرسائل الجديدة مع احترام
+/// الإعدادات المخصصة لكل جهاز
 /// ============================================================
 class LocalNotificationService {
   // ============================================
@@ -27,15 +29,30 @@ class LocalNotificationService {
   // ============================================
   // === Callbacks للتنقل ===
   // ============================================
-  /// يُستدعى عند الضغط على إشعار رسالة
-  /// يُمرَّر: (peerDeviceId, messageId)
   Function(String peerDeviceId, String? messageId)? onMessageTap;
 
-  /// قناة الرسائل
-  static const String _messageChannelId = 'lanphone_messages';
-  static const String _messageChannelName = 'الرسائل';
-  static const String _messageChannelDesc =
-      'إشعارات الرسائل الجديدة';
+  // ============================================
+  // === Channels ===
+  // ============================================
+  /// قناة الإشعارات الصامتة (رسائل من أجهزة مُسكتة)
+  static const String _silentChannelId = 'lanphone_messages_silent';
+  static const String _silentChannelName = 'رسائل صامتة';
+  static const String _silentChannelDesc = 'رسائل بدون صوت أو اهتزاز';
+
+  /// قناة الإشعارات مع صوت
+  static const String _soundChannelId = 'lanphone_messages_sound';
+  static const String _soundChannelName = 'رسائل بصوت';
+  static const String _soundChannelDesc = 'رسائل مع صوت';
+
+  /// قناة الإشعارات مع اهتزاز
+  static const String _vibrateChannelId = 'lanphone_messages_vibrate';
+  static const String _vibrateChannelName = 'رسائل بالاهتزاز';
+  static const String _vibrateChannelDesc = 'رسائل مع اهتزاز';
+
+  /// قناة الإشعارات الكاملة (صوت + اهتزاز)
+  static const String _fullChannelId = 'lanphone_messages_full';
+  static const String _fullChannelName = 'رسائل كاملة';
+  static const String _fullChannelDesc = 'رسائل مع صوت واهتزاز';
 
   // ============================================
   // === التهيئة ===
@@ -44,12 +61,10 @@ class LocalNotificationService {
   Future<void> init() async {
     if (_initialized) return;
 
-    // إعدادات أندرويد
     const androidSettings = AndroidInitializationSettings(
       '@mipmap/ic_launcher',
     );
 
-    // إعدادات iOS
     const iosSettings = DarwinInitializationSettings(
       requestAlertPermission: true,
       requestBadgePermission: true,
@@ -69,8 +84,7 @@ class LocalNotificationService {
             _onBackgroundNotificationResponse,
       );
 
-      // قناة أندرويد للرسائل
-      await _createAndroidChannel();
+      await _createAndroidChannels();
 
       _initialized = true;
       debugPrint('[Notifications] Initialized');
@@ -79,7 +93,7 @@ class LocalNotificationService {
     }
   }
 
-  Future<void> _createAndroidChannel() async {
+  Future<void> _createAndroidChannels() async {
     if (!Platform.isAndroid) return;
 
     final androidPlugin = _plugin.resolvePlatformSpecificImplementation<
@@ -87,12 +101,51 @@ class LocalNotificationService {
 
     if (androidPlugin == null) return;
 
-    // قناة الرسائل
+    // قناة صامتة
     await androidPlugin.createNotificationChannel(
       const AndroidNotificationChannel(
-        _messageChannelId,
-        _messageChannelName,
-        description: _messageChannelDesc,
+        _silentChannelId,
+        _silentChannelName,
+        description: _silentChannelDesc,
+        importance: Importance.low,
+        playSound: false,
+        enableVibration: false,
+        showBadge: true,
+      ),
+    );
+
+    // قناة الصوت فقط
+    await androidPlugin.createNotificationChannel(
+      const AndroidNotificationChannel(
+        _soundChannelId,
+        _soundChannelName,
+        description: _soundChannelDesc,
+        importance: Importance.high,
+        playSound: true,
+        enableVibration: false,
+        showBadge: true,
+      ),
+    );
+
+    // قناة الاهتزاز فقط
+    await androidPlugin.createNotificationChannel(
+      const AndroidNotificationChannel(
+        _vibrateChannelId,
+        _vibrateChannelName,
+        description: _vibrateChannelDesc,
+        importance: Importance.high,
+        playSound: false,
+        enableVibration: true,
+        showBadge: true,
+      ),
+    );
+
+    // قناة كاملة
+    await androidPlugin.createNotificationChannel(
+      const AndroidNotificationChannel(
+        _fullChannelId,
+        _fullChannelName,
+        description: _fullChannelDesc,
         importance: Importance.high,
         playSound: true,
         enableVibration: true,
@@ -116,8 +169,7 @@ class LocalNotificationService {
 
       if (peerDeviceId != null) {
         debugPrint(
-          '[Notifications] Tapped: peer=$peerDeviceId, '
-          'msg=$messageId',
+          '[Notifications] Tapped: peer=$peerDeviceId, msg=$messageId',
         );
         onMessageTap?.call(peerDeviceId, messageId);
       }
@@ -130,7 +182,6 @@ class LocalNotificationService {
   static void _onBackgroundNotificationResponse(
     NotificationResponse response,
   ) {
-    // في الخلفية — المعالجة تتم عند فتح التطبيق
     debugPrint('[Notifications] Background tap: ${response.payload}');
   }
 
@@ -138,14 +189,7 @@ class LocalNotificationService {
   // === عرض إشعار رسالة ===
   // ============================================
 
-  /// عرض إشعار رسالة جديدة
-  ///
-  /// [peerDeviceId] معرّف الجهاز المرسل
-  /// [peerName] اسم المرسل
-  /// [peerNumber] رقم المرسل (اختياري)
-  /// [body] نص الرسالة أو وصف
-  /// [messageId] معرّف الرسالة (للانتقال إليها)
-  /// [conversationId] للاستخدام في التجميع
+  /// عرض إشعار رسالة جديدة مع احترام إعدادات الجهاز
   Future<void> showMessageNotification({
     required String peerDeviceId,
     required String peerName,
@@ -157,15 +201,31 @@ class LocalNotificationService {
     if (!_initialized) await init();
 
     try {
-      // عنوان الإشعار
+      // 1) اجلب إعدادات الجهاز
+      final settings =
+          await DatabaseHelper.instance.getNotificationSettings(peerDeviceId);
+
+      final isEnabled = (settings['enabled'] as int?) == 1;
+      final hasSound = (settings['sound'] as int?) == 1;
+      final hasVibration = (settings['vibration'] as int?) == 1;
+
+      // 2) إذا الإشعارات متوقفة → لا شيء
+      if (!isEnabled) {
+        debugPrint(
+          '[Notifications] Skipped (disabled): $peerName',
+        );
+        return;
+      }
+
+      // 3) عنوان الإشعار
       final title = peerNumber != null && peerNumber.isNotEmpty
           ? '$peerName • #$peerNumber'
           : peerName;
 
-      // محتوى الإشعار (قصير)
+      // 4) محتوى الإشعار
       final preview = _truncate(body, 100);
 
-      // Payload للتنقل
+      // 5) Payload
       final payload = jsonEncode({
         'peerDeviceId': peerDeviceId,
         'messageId': messageId,
@@ -173,32 +233,41 @@ class LocalNotificationService {
         'type': 'message',
       });
 
-      // إعدادات أندرويد
+      // 6) اختر القناة المناسبة
+      final channel = _selectChannel(
+        hasSound: hasSound,
+        hasVibration: hasVibration,
+      );
+
+      // 7) إعدادات أندرويد
       final androidDetails = AndroidNotificationDetails(
-        _messageChannelId,
-        _messageChannelName,
-        channelDescription: _messageChannelDesc,
-        importance: Importance.high,
-        priority: Priority.high,
+        channel.id,
+        channel.name,
+        channelDescription: channel.description,
+        importance: channel.importance,
+        priority: _priorityFromImportance(channel.importance),
         showWhen: true,
         icon: '@mipmap/ic_launcher',
+        playSound: hasSound,
+        enableVibration: hasVibration,
         styleInformation: BigTextStyleInformation(
           preview,
           contentTitle: title,
           summaryText: 'LanPhone',
         ),
-        // تجميع الإشعارات حسب المحادثة
         groupKey: conversationId ?? peerDeviceId,
         autoCancel: true,
         onlyAlertOnce: false,
       );
 
-      // إعدادات iOS
-      const iosDetails = DarwinNotificationDetails(
+      // 8) إعدادات iOS
+      final iosDetails = DarwinNotificationDetails(
         presentAlert: true,
         presentBadge: true,
-        presentSound: true,
-        interruptionLevel: InterruptionLevel.active,
+        presentSound: hasSound,
+        interruptionLevel: hasSound
+            ? InterruptionLevel.active
+            : InterruptionLevel.passive,
       );
 
       final details = NotificationDetails(
@@ -206,8 +275,7 @@ class LocalNotificationService {
         iOS: iosDetails,
       );
 
-      // معرّف الإشعار: نستخدم hash لـ deviceId
-      // (لتحديث نفس الإشعار في نفس المحادثة بدل تراكمها)
+      // 9) معرّف الإشعار (نفس لكل رسالة في نفس المحادثة)
       final notificationId = peerDeviceId.hashCode & 0x7FFFFFFF;
 
       await _plugin.show(
@@ -218,9 +286,67 @@ class LocalNotificationService {
         payload: payload,
       );
 
-      debugPrint('[Notifications] Message shown from $peerName');
+      debugPrint(
+        '[Notifications] Shown: $peerName '
+        '(sound=$hasSound, vib=$hasVibration)',
+      );
     } catch (e) {
       debugPrint('[Notifications] showMessage error: $e');
+    }
+  }
+
+  // ============================================
+  // === اختيار القناة ===
+  // ============================================
+
+  _ChannelInfo _selectChannel({
+    required bool hasSound,
+    required bool hasVibration,
+  }) {
+    if (hasSound && hasVibration) {
+      return const _ChannelInfo(
+        id: _fullChannelId,
+        name: _fullChannelName,
+        description: _fullChannelDesc,
+        importance: Importance.high,
+      );
+    }
+    if (hasSound) {
+      return const _ChannelInfo(
+        id: _soundChannelId,
+        name: _soundChannelName,
+        description: _soundChannelDesc,
+        importance: Importance.high,
+      );
+    }
+    if (hasVibration) {
+      return const _ChannelInfo(
+        id: _vibrateChannelId,
+        name: _vibrateChannelName,
+        description: _vibrateChannelDesc,
+        importance: Importance.high,
+      );
+    }
+    return const _ChannelInfo(
+      id: _silentChannelId,
+      name: _silentChannelName,
+      description: _silentChannelDesc,
+      importance: Importance.low,
+    );
+  }
+
+  Priority _priorityFromImportance(Importance importance) {
+    switch (importance) {
+      case Importance.min:
+        return Priority.min;
+      case Importance.low:
+        return Priority.low;
+      case Importance.defaultImportance:
+        return Priority.defaultPriority;
+      case Importance.high:
+        return Priority.high;
+      case Importance.max:
+        return Priority.max;
     }
   }
 
@@ -228,11 +354,8 @@ class LocalNotificationService {
   // === إلغاء الإشعارات ===
   // ============================================
 
-  /// إلغاء إشعار محادثة محددة
-  /// (يُستدعى عند فتح المحادثة)
   Future<void> cancelForDevice(String peerDeviceId) async {
     if (!_initialized) return;
-
     try {
       final id = peerDeviceId.hashCode & 0x7FFFFFFF;
       await _plugin.cancel(id);
@@ -241,7 +364,6 @@ class LocalNotificationService {
     }
   }
 
-  /// إلغاء كل الإشعارات
   Future<void> cancelAll() async {
     if (!_initialized) return;
     try {
@@ -295,4 +417,21 @@ class LocalNotificationService {
     if (text.length <= maxLength) return text;
     return '${text.substring(0, maxLength)}...';
   }
+}
+
+// ============================================================
+// === نموذج معلومات القناة ===
+// ============================================================
+class _ChannelInfo {
+  final String id;
+  final String name;
+  final String description;
+  final Importance importance;
+
+  const _ChannelInfo({
+    required this.id,
+    required this.name,
+    required this.description,
+    required this.importance,
+  });
 }
