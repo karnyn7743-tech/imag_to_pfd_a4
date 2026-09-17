@@ -6,6 +6,8 @@ import '../../core/discovery/device_discovery.dart';
 import '../../core/services/permission_service.dart';
 import '../theme/app_theme.dart';
 import 'dialer_screen.dart';
+import 'qr_display_screen.dart';
+import 'qr_scanner_screen.dart';
 import 'settings_screen.dart';
 import 'tabs/conversations_tab.dart';
 import 'tabs/devices_tab.dart';
@@ -45,6 +47,7 @@ class _HomeScreenState extends State<HomeScreen>
   // ============================================
   // === الأذونات ===
   // ============================================
+
   Future<void> _ensureDiscoveryPermissions() async {
     if (_permissionsChecked) return;
     _permissionsChecked = true;
@@ -69,14 +72,135 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   // ============================================
-  // === الأزرار العلوية ===
+  // === QR (جديد) ===
   // ============================================
 
-  void _openQrScanner() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('ماسح QR سيُضاف في إصدار لاحق')),
+  /// عرض قائمة خيارات QR
+  void _showQrOptions() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Theme.of(context).brightness == Brightness.dark
+              ? AppTheme.darkSurface
+              : Colors.white,
+          borderRadius: const BorderRadius.vertical(
+            top: Radius.circular(24),
+          ),
+        ),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // شريط السحب
+              Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade400,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              // العنوان
+              const Text(
+                'الاقتران عبر QR',
+                style: TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'شارك رقمك أو أضف جهازًا آخر فورًا',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: Colors.grey.shade600,
+                ),
+              ),
+              const SizedBox(height: 24),
+
+              // الخيارات
+              Row(
+                children: [
+                  // عرض رمزي
+                  Expanded(
+                    child: _QrOption(
+                      icon: Icons.qr_code_2,
+                      label: 'عرض رمزي',
+                      subtitle: 'ليراه الآخرون',
+                      color: AppTheme.primaryColor,
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        _openQrDisplay();
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  // مسح رمز
+                  Expanded(
+                    child: _QrOption(
+                      icon: Icons.qr_code_scanner,
+                      label: 'مسح رمز',
+                      subtitle: 'لإضافة جهاز',
+                      color: const Color(0xFF25D366),
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        _openQrScanner();
+                      },
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        ),
+      ),
     );
   }
+
+  Future<void> _openQrDisplay() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const QrDisplayScreen()),
+    );
+  }
+
+  Future<void> _openQrScanner() async {
+    // اطلب إذن الكاميرا
+    final granted = await PermissionService.requestAll(
+      [
+        // نستخدم الطلب العام
+      ],
+    );
+
+    if (!mounted) return;
+
+    final result = await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const QrScannerScreen()),
+    );
+
+    // إذا عاد بنتيجة (جهاز مضاف)
+    if (result != null && mounted) {
+      // انتقل لتبويب الأجهزة ليراه المستخدم
+      _tabController.animateTo(2);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('تمت إضافة الجهاز بنجاح'),
+          backgroundColor: AppTheme.successColor,
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  // ============================================
+  // === الأزرار الأخرى ===
+  // ============================================
 
   void _openSettings() {
     Navigator.of(context).push(
@@ -110,7 +234,6 @@ class _HomeScreenState extends State<HomeScreen>
 
     return Scaffold(
       appBar: AppBar(
-        // العنوان: اسم التطبيق + رقمي
         title: Row(
           children: [
             const Text(AppConstants.appName),
@@ -176,16 +299,16 @@ class _HomeScreenState extends State<HomeScreen>
           ],
         ),
         actions: [
-          // زر لوحة الاتصال
           IconButton(
             icon: const Icon(Icons.dialpad),
             tooltip: 'الاتصال برقم',
             onPressed: _openDialer,
           ),
+          // ✅ قائمة QR
           IconButton(
-            icon: const Icon(Icons.qr_code_scanner),
-            tooltip: 'اقتران بـ QR',
-            onPressed: _openQrScanner,
+            icon: const Icon(Icons.qr_code_2),
+            tooltip: 'الاقتران بـ QR',
+            onPressed: _showQrOptions,
           ),
           IconButton(
             icon: const Icon(Icons.settings_outlined),
@@ -224,8 +347,9 @@ class _HomeScreenState extends State<HomeScreen>
 }
 
 // ============================================================
-// === محتوى التبويب ===
+// === عناصر مساعدة ===
 // ============================================================
+
 class _TabContent extends StatelessWidget {
   final IconData icon;
   final String label;
@@ -268,6 +392,78 @@ class _TabContent extends StatelessWidget {
           ),
         ],
       ],
+    );
+  }
+}
+
+/// خيار QR في القائمة السفلية
+class _QrOption extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String subtitle;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _QrOption({
+    required this.icon,
+    required this.label,
+    required this.subtitle,
+    required this.color,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          padding: const EdgeInsets.symmetric(
+            horizontal: 16,
+            vertical: 20,
+          ),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: color.withOpacity(0.3),
+              width: 1.5,
+            ),
+          ),
+          child: Column(
+            children: [
+              Container(
+                width: 56,
+                height: 56,
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.2),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(icon, color: color, size: 28),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: color,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                subtitle,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey.shade600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
