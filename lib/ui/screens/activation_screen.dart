@@ -8,9 +8,6 @@ import '../theme/app_theme.dart';
 
 /// ============================================================
 /// شاشة تنشيط التطبيق
-/// ------------------------------------------------
-/// تُعرض مرة واحدة عند أول تثبيت على كل جهاز.
-/// المفتاح مرتبط بهذا الجهاز فقط.
 /// ============================================================
 class ActivationScreen extends StatefulWidget {
   const ActivationScreen({super.key});
@@ -20,21 +17,11 @@ class ActivationScreen extends StatefulWidget {
 }
 
 class _ActivationScreenState extends State<ActivationScreen> {
-  // ============================================
-  // === المراجع ===
-  // ============================================
   final TextEditingController _controller = TextEditingController();
   final FocusNode _focus = FocusNode();
 
-  // ============================================
-  // === الحالة ===
-  // ============================================
   bool _busy = false;
   bool _showDeviceId = false;
-
-  // ============================================
-  // === دورة الحياة ===
-  // ============================================
 
   @override
   void initState() {
@@ -52,7 +39,7 @@ class _ActivationScreenState extends State<ActivationScreen> {
   }
 
   // ============================================
-  // === لصق تلقائي من الحافظة ===
+  // === ✅ لصق تلقائي ذكي ===
   // ============================================
 
   Future<void> _autoPasteFromClipboard() async {
@@ -61,15 +48,19 @@ class _ActivationScreenState extends State<ActivationScreen> {
       final text = data?.text?.trim() ?? '';
       if (text.isEmpty) return;
 
-      final normalized = text.replaceAll(RegExp(r'[\s\-]'), '');
-      if (normalized.length == 16 &&
-          RegExp(r'^[a-fA-F0-9]{16}$').hasMatch(normalized)) {
-        if (mounted) {
-          _controller.text = text;
-          setState(() {});
-        }
+      // ✅ استخرج أي شيء يشبه المفتاح (16 hex + شرطات اختيارية)
+      final match = RegExp(
+        r'[A-Fa-f0-9]{4}-?[A-Fa-f0-9]{4}-?[A-Fa-f0-9]{4}-?[A-Fa-f0-9]{4}',
+      ).firstMatch(text);
+
+      if (match != null && mounted) {
+        _controller.text = match.group(0)!;
+        setState(() {});
+        debugPrint('[Activation] Auto-pasted key: ${match.group(0)}');
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[Activation] autoPaste error: $e');
+    }
   }
 
   // ============================================
@@ -144,9 +135,7 @@ class _ActivationScreenState extends State<ActivationScreen> {
               children: [
                 const SizedBox(height: 20),
 
-                // ============================================
-                // === الشعار ===
-                // ============================================
+                // الشعار
                 Container(
                   width: 96,
                   height: 96,
@@ -174,9 +163,7 @@ class _ActivationScreenState extends State<ActivationScreen> {
 
                 const SizedBox(height: 24),
 
-                // ============================================
-                // === العنوان ===
-                // ============================================
+                // العنوان
                 const Text(
                   'تنشيط التطبيق',
                   style: TextStyle(
@@ -202,9 +189,7 @@ class _ActivationScreenState extends State<ActivationScreen> {
 
                 const SizedBox(height: 32),
 
-                // ============================================
-                // === بطاقة معرّف الجهاز ===
-                // ============================================
+                // معرّف الجهاز
                 Container(
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
@@ -326,7 +311,7 @@ class _ActivationScreenState extends State<ActivationScreen> {
                 const SizedBox(height: 24),
 
                 // ============================================
-                // === حقل المفتاح ===
+                // === حقل المفتاح (مُصحَّح — يقبل اللصق) ===
                 // ============================================
                 Container(
                   padding: const EdgeInsets.symmetric(
@@ -372,7 +357,8 @@ class _ActivationScreenState extends State<ActivationScreen> {
                         focusNode: _focus,
                         textAlign: TextAlign.center,
                         textCapitalization: TextCapitalization.characters,
-                        maxLength: 19,
+                        // ✅ لا inputFormatters — يقبل اللصق بحرية
+                        // ✅ لا maxLength — يقبل أي طول
                         style: const TextStyle(
                           fontSize: 20,
                           fontWeight: FontWeight.bold,
@@ -381,11 +367,6 @@ class _ActivationScreenState extends State<ActivationScreen> {
                           fontFeatures: [FontFeature.tabularFigures()],
                         ),
                         cursorColor: AppTheme.primaryColor,
-                        inputFormatters: [
-                          FilteringTextInputFormatter.allow(
-                            RegExp(r'[0-9a-fA-F\-\s]'),
-                          ),
-                        ],
                         decoration: const InputDecoration(
                           hintText: 'XXXX-XXXX-XXXX-XXXX',
                           hintStyle: TextStyle(
@@ -404,9 +385,7 @@ class _ActivationScreenState extends State<ActivationScreen> {
                   ),
                 ),
 
-                // ============================================
-                // === رسالة الخطأ ===
-                // ============================================
+                // رسالة الخطأ
                 if (service.error != null) ...[
                   const SizedBox(height: 12),
                   Container(
@@ -443,9 +422,7 @@ class _ActivationScreenState extends State<ActivationScreen> {
 
                 const SizedBox(height: 20),
 
-                // ============================================
-                // === زر التنشيط ===
-                // ============================================
+                // زر التنشيط
                 SizedBox(
                   width: double.infinity,
                   child: Material(
@@ -499,9 +476,7 @@ class _ActivationScreenState extends State<ActivationScreen> {
 
                 const SizedBox(height: 24),
 
-                // ============================================
-                // === معلومات إضافية ===
-                // ============================================
+                // معلومات إضافية
                 Container(
                   padding: const EdgeInsets.all(14),
                   decoration: BoxDecoration(
