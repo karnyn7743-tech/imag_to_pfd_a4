@@ -13,17 +13,16 @@ android {
     // ============================================================
     // === إصدارات SDK ===
     // ============================================================
-    compileSdk = 36
+    compileSdk = 34
 
-    // ✅ تم الترقية من 27.0.12077973 إلى 28.2.13676358
-    // السبب: مكتبة jni تتطلب NDK 28.2
-    ndkVersion = "28.2.13676358"
+    // إصدار NDK (مطلوب لـ flutter_webrtc)
+    ndkVersion = "27.0.12077973"
 
     // ============================================================
     // === إصدارات Java و Kotlin ===
     // ============================================================
     compileOptions {
-        // ✅ تم التفعيل — مطلوب لـ flutter_local_notifications
+        // مطلوب لـ flutter_local_notifications
         isCoreLibraryDesugaringEnabled = true
 
         sourceCompatibility = JavaVersion.VERSION_17
@@ -31,7 +30,7 @@ android {
     }
 
     kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_17.toString()
+        jvmTarget = "17"
     }
 
     // ============================================================
@@ -40,7 +39,7 @@ android {
     defaultConfig {
         applicationId = "com.lanphone.app"
         minSdk = 23
-        targetSdk = 36
+        targetSdk = 34
         versionCode = flutter.versionCode
         versionName = flutter.versionName
         multiDexEnabled = true
@@ -59,7 +58,6 @@ android {
                 "proguard-rules.pro"
             )
         }
-
         debug {
             isDebuggable = true
         }
@@ -85,7 +83,7 @@ android {
     }
 
     // ============================================================
-    // === التعامل مع مشاكل البناء ===
+    // === Lint ===
     // ============================================================
     lint {
         checkReleaseBuilds = false
@@ -94,9 +92,8 @@ android {
 }
 
 // ============================================================
-// === التبعيات (Dependencies) ===
+// === التبعيات ===
 // ============================================================
-// ✅ مطلوب لـ flutter_local_notifications
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
 }
