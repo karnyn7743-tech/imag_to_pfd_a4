@@ -13,6 +13,8 @@
     <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES"
         android:usesPermissionFlags="neverForLocation"
         tools:targetApi="tiramisu" />
+
+    <!-- المكالمات -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.CAMERA" />
@@ -21,7 +23,7 @@
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"
         tools:targetApi="s" />
 
-    <!-- === المكالمات في الخلفية === -->
+    <!-- الخلفية والمكالمات -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.DISABLE_KEYGUARD" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
@@ -36,26 +38,22 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL"
         tools:targetApi="34" />
 
-    <!-- ============================================================ -->
-    <!-- === تعطيل تحسين البطارية ===                                  -->
-    <!-- ============================================================ -->
+    <!-- البطارية -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
-    <!-- ============================================================ -->
-    <!-- === قفل التطبيق بالبصمة (جديد) ===                           -->
-    <!-- ============================================================ -->
+    <!-- البصمة -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <uses-permission android:name="android.permission.USE_FINGERPRINT"
         tools:targetApi="p" />
 
-    <!-- === الإشعارات === -->
+    <!-- الإشعارات -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"
         tools:targetApi="tiramisu" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
 
-    <!-- === الملفات والوسائط === -->
+    <!-- الوسائط -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"
         tools:targetApi="tiramisu" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"
@@ -69,23 +67,32 @@
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
 
-    <!-- === ميزات الأجهزة === -->
+    <!-- ============================================================ -->
+    <!-- === ميزات الأجهزة ===                                         -->
+    <!-- ============================================================ -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="true" />
     <uses-feature android:name="android.hardware.wifi" android:required="true" />
     <uses-feature android:name="android.hardware.fingerprint" android:required="false" />
 
-    <!-- === Queries === -->
+    <!-- ============================================================ -->
+    <!-- === Queries (Android 11+) ===                                -->
+    <!-- ============================================================ -->
     <queries>
         <intent><action android:name="android.media.action.IMAGE_CAPTURE" /></intent>
         <intent><action android:name="android.intent.action.GET_CONTENT" /></intent>
         <intent><action android:name="android.intent.action.OPEN_DOCUMENT" /></intent>
         <intent><action android:name="android.intent.action.OPEN_DOCUMENT_TREE" /></intent>
-        <intent><action android:name="android.intent.action.VIEW" /><data android:scheme="https" /></intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" />
+        </intent>
     </queries>
 
-    <!-- === صلاحية مخصصة للحزمة === -->
+    <!-- ============================================================ -->
+    <!-- === صلاحية مخصصة للحزمة ===                                  -->
+    <!-- ============================================================ -->
     <permission
         android:name="com.lanphone.app.PERMISSION_CALL"
         android:protectionLevel="normal" />
@@ -106,6 +113,9 @@
         android:enableOnBackInvokedCallback="true"
         tools:targetApi="34">
 
+        <!-- ============================================ -->
+        <!-- === النشاط الرئيسي ===                        -->
+        <!-- ============================================ -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -128,53 +138,26 @@
             </intent-filter>
         </activity>
 
+        <!-- ============================================ -->
+        <!-- === Flutter Embedding v2 ===                 -->
+        <!-- ============================================ -->
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
 
-        <!-- === مكونات flutter_callkit_incoming === -->
-        <activity
-            android:name="com.hiennv.flutter_callkit_incoming.CallkitIncomingActivity"
-            android:taskAffinity="com.hiennv.flutter_callkit_incoming.INCOMING_CALL_AFFINITY"
-            android:excludeFromRecents="true"
-            android:launchMode="singleInstance"
-            android:permission="com.lanphone.app.PERMISSION_CALL" />
+        <!-- ============================================================ -->
+        <!-- ⚠️ مهم: لا نُعلن عن مكونات flutter_callkit_incoming هنا       -->
+        <!-- لأن الحزمة تتولى ذلك تلقائيًا. أي إعلان مكرر → تعارض.       -->
+        <!-- ============================================================ -->
+
+        <!-- === مستقبلات الإشعارات المحلية فقط === -->
+        <receiver
+            android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver"
+            android:exported="false" />
 
         <receiver
-            android:name="com.hiennv.flutter_callkit_incoming.CallkitIncomingBroadcastReceiver"
-            android:enabled="true"
-            android:exported="true"
-            android:permission="com.lanphone.app.PERMISSION_CALL">
-            <intent-filter>
-                <action android:name="com.lanphone.app.com.hiennv.flutter_callkit_incoming.ACTION_CALL_ACCEPT" />
-                <action android:name="com.lanphone.app.com.hiennv.flutter_callkit_incoming.ACTION_CALL_DECLINE" />
-                <action android:name="com.lanphone.app.com.hiennv.flutter_callkit_incoming.ACTION_CALL_ENDED" />
-                <action android:name="com.lanphone.app.com.hiennv.flutter_callkit_incoming.ACTION_CALL_TIMEOUT" />
-                <action android:name="com.lanphone.app.com.hiennv.flutter_callkit_incoming.ACTION_CALL_CALLBACK" />
-                <action android:name="com.lanphone.app.com.hiennv.flutter_callkit_incoming.ACTION_CALL_TOGGLE_HOLD" />
-                <action android:name="com.lanphone.app.com.hiennv.flutter_callkit_incoming.ACTION_CALL_TOGGLE_MUTE" />
-                <action android:name="com.lanphone.app.com.hiennv.flutter_callkit_incoming.ACTION_CALL_TOGGLE_DMTF" />
-                <action android:name="com.lanphone.app.com.hiennv.flutter_callkit_incoming.ACTION_CALL_TOGGLE_GROUP" />
-                <action android:name="com.lanphone.app.com.hiennv.flutter_callkit_incoming.ACTION_CALL_TOGGLE_AUDIO_SESSION" />
-            </intent-filter>
-        </receiver>
-
-        <service
-            android:name="com.hiennv.flutter_callkit_incoming.CallkitNotificationService"
-            android:foregroundServiceType="phoneCall"
-            android:permission="com.lanphone.app.PERMISSION_CALL" />
-
-        <service
-            android:name="com.hiennv.flutter_callkit_incoming.CallkitConnectionService"
-            android:permission="android.permission.BIND_CONNECTION_SERVICE">
-            <intent-filter>
-                <action android:name="android.telecom.ConnectionService" />
-            </intent-filter>
-        </service>
-
-        <!-- === مستقبلات الإشعارات === -->
-        <receiver android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver" android:exported="false" />
-        <receiver android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver" android:exported="false">
+            android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver"
+            android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
@@ -182,7 +165,10 @@
                 <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
             </intent-filter>
         </receiver>
-        <receiver android:name="com.dexterous.flutterlocalnotifications.ActionBroadcastReceiver" android:exported="false" />
+
+        <receiver
+            android:name="com.dexterous.flutterlocalnotifications.ActionBroadcastReceiver"
+            android:exported="false" />
 
     </application>
 
