@@ -108,7 +108,14 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^5.0.0
-
+  # ============================================================
+  # === تجاوزات التبعيات (لحل تعارضات) ===
+ # ============================================================
+dependency_overrides:
+  # ✅ حزمة record_linux لم تُحدَّث لتتوافق مع
+  # record_platform_interface 1.6.0. الحل: تجاوز الواجهة.
+  record_platform_interface: 1.4.0
+  
 flutter:
   uses-material-design: true
 
