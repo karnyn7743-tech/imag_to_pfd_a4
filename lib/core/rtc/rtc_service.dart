@@ -278,29 +278,29 @@ class RtcService extends ChangeNotifier {
   }
 
   // ============================================
-  // === Callkit UI ===
+  // === ✅ Callkit UI (مُصحَّح) ===
   // ============================================
 
   Future<void> _showCallkitIncoming() async {
     try {
+      // ✅ نستخدم فقط المعاملات المعروفة في 3.1.5
+      // ونضع النصوص المخصصة داخل extra
       final params = CallKitParams(
         id: _currentCallId,
         nameCaller: _peerName,
         appName: 'LanPhone',
         type: _callType == AppConstants.callTypeVideo ? 1 : 0,
         duration: 45000,
-        textAccept: 'قبول',
-        textDecline: 'رفض',
-        textMissedCall: 'مكالمة فائتة',
-        textCallback: 'إعادة الاتصال',
-        missingPermissionMessage: 'نحتاج الأذونات لعرض المكالمة',
         extra: <String, dynamic>{
           'peerDeviceId': _peerDeviceId,
           'peerName': _peerName,
           'callType': _callType,
           'callId': _currentCallId,
+          'textAccept': 'قبول',
+          'textDecline': 'رفض',
+          'textMissedCall': 'مكالمة فائتة',
+          'textCallback': 'إعادة الاتصال',
         },
-        headers: <String, dynamic>{},
         android: const AndroidParams(
           isCustomNotification: true,
           isShowLogo: true,
@@ -333,6 +333,7 @@ class RtcService extends ChangeNotifier {
       );
 
       await FlutterCallkitIncoming.showCallkitIncoming(params);
+      debugPrint('[RTC] Callkit shown for $_currentCallId');
     } catch (e) {
       debugPrint('[RTC] showCallkitIncoming error: $e');
     }
@@ -347,20 +348,13 @@ class RtcService extends ChangeNotifier {
   }
 
   // ============================================
-  // === ✅ أحداث Callkit (مُصحَّح) ===
+  // === أحداث Callkit (مُصحَّح) ===
   // ============================================
-  //
-  // في الإصدار الجديد من flutter_callkit_incoming،
-  // تغيّرت طريقة الوصول للحدث:
-  //   - لم يعد event.event موجودًا
-  //   - لم تعد الثوابت CallEvent.actionXxx موجودة
-  //
-  // الحل: نستخدم toString() ونطابق نصيًا.
 
   Future<void> _onCallkitEvent(CallEvent? event) async {
     if (event == null) return;
 
-    // toString() يُرجع اسم الحدث في كل الإصدارات
+    // ✅ toString() يُرجع اسم الحدث في كل الإصدارات
     final eventStr = event.toString();
     debugPrint('[RTC] Callkit event: $eventStr');
 
