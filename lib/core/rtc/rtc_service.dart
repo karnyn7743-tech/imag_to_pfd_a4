@@ -166,7 +166,7 @@ class RtcService extends ChangeNotifier {
       return false;
     }
 
-    // ✅ تحقق من الحظر
+    // تحقق من الحظر
     try {
       final blocked =
           await DatabaseHelper.instance.isDeviceBlocked(peerDeviceId);
@@ -235,7 +235,7 @@ class RtcService extends ChangeNotifier {
       return;
     }
 
-    // ✅ ارفض المكالمة من جهاز محظور
+    // ارفض المكالمة من جهاز محظور
     try {
       final blocked =
           await DatabaseHelper.instance.isDeviceBlocked(msg.from);
@@ -347,33 +347,34 @@ class RtcService extends ChangeNotifier {
   }
 
   // ============================================
-  // === أحداث Callkit ===
+  // === ✅ أحداث Callkit (مُصحَّح) ===
   // ============================================
+  //
+  // في الإصدار الجديد من flutter_callkit_incoming،
+  // تغيّرت طريقة الوصول للحدث:
+  //   - لم يعد event.event موجودًا
+  //   - لم تعد الثوابت CallEvent.actionXxx موجودة
+  //
+  // الحل: نستخدم toString() ونطابق نصيًا.
 
   Future<void> _onCallkitEvent(CallEvent? event) async {
     if (event == null) return;
 
-    final eventName = event.event;
-    debugPrint('[RTC] Callkit event: $eventName');
+    // toString() يُرجع اسم الحدث في كل الإصدارات
+    final eventStr = event.toString();
+    debugPrint('[RTC] Callkit event: $eventStr');
 
-    switch (eventName) {
-      case CallEvent.actionCallAccept:
-        await _onCallkitAccept(event);
-        break;
-      case CallEvent.actionCallDecline:
-        await _onCallkitDecline();
-        break;
-      case CallEvent.actionCallTimeout:
-        await _onCallkitTimeout();
-        break;
-      case CallEvent.actionCallEnd:
-        await _onCallkitEnd();
-        break;
-      case CallEvent.actionCallToggleMute:
-        toggleMute();
-        break;
-      default:
-        break;
+    // مطابقة نصية
+    if (eventStr.contains('actionCallAccept')) {
+      await _onCallkitAccept(event);
+    } else if (eventStr.contains('actionCallDecline')) {
+      await _onCallkitDecline();
+    } else if (eventStr.contains('actionCallTimeout')) {
+      await _onCallkitTimeout();
+    } else if (eventStr.contains('actionCallEnd')) {
+      await _onCallkitEnd();
+    } else if (eventStr.contains('actionCallToggleMute')) {
+      toggleMute();
     }
   }
 
