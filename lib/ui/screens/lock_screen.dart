@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:local_auth/local_auth.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/constants.dart';
@@ -253,7 +254,7 @@ class _LockScreenState extends State<LockScreen>
                 const SizedBox(height: 24),
 
                 // ============================================
-                // === زر المصادقة ===
+                // === رسالة "البصمة غير متوفرة" ===
                 // ============================================
                 if (!lockService.available)
                   Padding(
