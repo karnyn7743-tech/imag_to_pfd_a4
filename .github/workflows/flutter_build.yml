@@ -1,49 +1,69 @@
-name: Flutter Build APK
+name: Build LanPhone APK
 
-# الأحداث التي تفعل التشغيل التلقائي واليدوي
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [ main, master ]
   pull_request:
-    branches: [ "main", "master" ]
-  workflow_dispatch: # يتيح لك تشغيل البناء يدوياً بنقرة زر من تبويب Actions في GitHub
+    branches: [ main, master ]
+  workflow_dispatch:
 
 jobs:
   build:
+    name: Build APK
     runs-on: ubuntu-latest
 
     steps:
-    # 1. جلب كود المشروع من غيتهاب
-    - name: Checkout Repository
-      uses: actions/checkout@v4
+      # ✅ تحديث إلى v5
+      - name: Checkout code
+        uses: actions/checkout@v5
 
-    # 2. إعداد بيئة جافا JDK 17
-    - name: Set up Java JDK
-      uses: actions/setup-java@v4
-      with:
-        java-version: '17'
-        distribution: 'temurin'
-        cache: 'gradle' # تفعيل التخزين المؤقت لأدوات Gradle لتسريع البناء
+      # ✅ تحديث إلى v5
+      - name: Setup Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'zulu'
+          java-version: '17'
 
-    # 3. إعداد وتسريع بيئة Flutter
-    - name: Set up Flutter
-      uses: subosito/flutter-action@v2
-      with:
-        channel: 'stable'
-        cache: true # تفعيل التخزين المؤقت لمكتبات وأدوات Flutter
+      # تثبيت Flutter
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.0'
+          channel: 'stable'
+          cache: true
 
-    # 4. تحميل واستيراد مكتبات المشروع
-    - name: Install Dependencies
-      run: flutter pub get
+      # التحقق من Flutter
+      - name: Verify Flutter
+        run: flutter doctor -v
 
-    # 5. بناء تطبيق أندرويد النهائي (APK)
-    - name: Build APK
-      run: flutter build apk --release
+      # حذف pubspec.lock لضمان تحديث المكتبات
+      - name: Remove lock file
+        run: rm -f pubspec.lock
 
-    # 6. رفع ملف الـ APK الناتج ليكون جاهزاً للتحميل
-    - name: Upload APK Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: release-apk
-        path: build/app/outputs/flutter-apk/app-release.apk
-        retention-days: 7 # الاحتفاظ بالملف للتحميل لمدة 7 أيام بدلاً من استهلاك المساحة للأبد
+      # تنظيف المشروع
+      - name: Clean project
+        run: flutter clean
+
+      # تنزيل الحزم
+      - name: Get dependencies
+        run: flutter pub get
+
+      # التحليل (يستمر حتى مع التحذيرات)
+      - name: Analyze code
+        run: flutter analyze || true
+
+      # بناء APK
+      - name: Build APK
+        run: |
+          flutter build apk \
+            --release \
+            --no-shrink \
+            --target-platform android-arm,android-arm64,android-x64
+
+      # رفع APK
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: lanphone-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 30
