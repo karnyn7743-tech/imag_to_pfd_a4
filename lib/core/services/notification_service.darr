@@ -1,29 +1,40 @@
 import 'dart:async';
+
 import 'package:flutter/foundation.dart';
+import 'package:flutter_callkit_incoming/entities/entities.dart';
 import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
-import 'package:flutter_callkit_incoming/entities/call_event.dart';
 
 /// ============================================================
-/// خدمة الإشعارات — تستمع لأحداث المكالمات من النظام
+/// خدمة الإشعارات — تستمع لأحداث Callkit من النظام
 /// ============================================================
 class NotificationService extends ChangeNotifier {
+  NotificationService() {
+    _init();
+  }
+
+  // ============================================
+  // === المراجع ===
+  // ============================================
   StreamSubscription<CallEvent?>? _eventSubscription;
 
   // ============================================
-  // === بث الأحداث إلى بقية التطبيق ===
+  // === Stream للأحداث ===
   // ============================================
   final StreamController<CallEvent?> _eventController =
       StreamController<CallEvent?>.broadcast();
   Stream<CallEvent?> get callEvents => _eventController.stream;
 
-  NotificationService() {
-    _init();
-  }
+  // ============================================
+  // === التهيئة ===
+  // ============================================
 
   void _init() {
     _eventSubscription = FlutterCallkitIncoming.onEvent.listen((event) {
       if (event == null) return;
-      debugPrint('[NotificationService] Event: ${event.event}');
+
+      // ✅ استخدام toString بدل event.event (API تغيّر)
+      debugPrint('[NotificationService] Event: $event');
+
       _eventController.add(event);
     });
   }
