@@ -10,74 +10,46 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-
-  # التوطين
   flutter_localizations:
     sdk: flutter
 
-  # الواجهة
-  cupertino_icons: ^1.0.8
-
-  # إدارة الحالة
-  provider: ^6.1.2
-
-  # الشبكة
-  web_socket_channel: ^3.0.1
-  multicast_dns: ^0.3.2+9
-
-  # WebRTC
-  flutter_webrtc: ^1.6.2
-  webrtc_interface: ^1.5.1
-
-  # قاعدة البيانات
-  sqflite: ^2.4.1
-  path: ^1.9.0
-  path_provider: ^2.1.5
-
-  # التشفير
-  crypto: ^3.0.5
-  encrypt: ^5.0.3
-  pointycastle: ^3.9.1
-
-  # الأذونات
-  permission_handler: ^13.0.2
-
-  # التخزين
-  shared_preferences: ^2.3.2
-
-  # الوسائط
-  file_picker: ^11.0.3
-  image_picker: ^1.1.2
-  cached_network_image: ^3.4.1
-
-  # معاينة
-  video_player: ^2.9.2
-  open_filex: ^4.5.0
-
-  # الإشعارات والمكالمات
-  flutter_local_notifications: ^20.1.0
-  flutter_callkit_incoming: ^3.1.5
-
-  # الصوت
-  audio_session: ^0.2.4
-  flutter_ringtone_player: ^4.0.0+4
-  record: ^6.2.1
-  just_audio: ^0.10.6
-
-  # أدوات
-  uuid: ^4.5.1
-  device_info_plus: ^12.4.0
-  intl: ^0.20.2
-  local_auth: ^3.0.1
-
-  # QR
-  qr_flutter: ^4.1.0
-  mobile_scanner: ^7.1.1
+  # ⚠️ استخدام any لكشف المكتبة المشكِلة
+  cupertino_icons: any
+  provider: any
+  web_socket_channel: any
+  multicast_dns: any
+  flutter_webrtc: any
+  webrtc_interface: any
+  sqflite: any
+  path: any
+  path_provider: any
+  crypto: any
+  encrypt: any
+  pointycastle: any
+  permission_handler: any
+  shared_preferences: any
+  file_picker: any
+  image_picker: any
+  cached_network_image: any
+  video_player: any
+  open_filex: any
+  flutter_local_notifications: any
+  flutter_callkit_incoming: any
+  audio_session: any
+  flutter_ringtone_player: any
+  record: any
+  just_audio: any
+  uuid: any
+  device_info_plus: any
+  intl: any
+  local_auth: any
+  qr_flutter: any
+  mobile_scanner: any
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^6.0.0
+  flutter_lints: any
 
 flutter:
   uses-material-design: true
