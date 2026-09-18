@@ -1,1 +1,51 @@
+name: Flutter Build APK
+
+# تحديد الأحداث التي تُفعّل التشغيل التلقائي
+on:
+  push:
+    branches: [ "main", "master" ]   # يشتغل عند رفع كود لفرع main أو master
+  pull_request:
+    branches: [ "main", "master" ]   # يشتغل عند عمل طلب سحب (PR)
+
+jobs:
+  build:
+    # بيئة التشغيل (سيرفر مجاني بنظام لینوكس)
+    runs-on: ubuntu-latest
+
+    steps:
+    # 1. سحب كود المشروع من غيتهاب إلى السيرفر
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    # 2. إعداد بيئة جافا (مطلوبة لبناء تطبيقات أندرويد)
+    - name: Set up Java JDK
+      uses: actions/setup-java@v3
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+
+    # 3. تثبيت بيئة فلاتر على السيرفر
+    - name: Set up Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        channel: 'stable'
+
+    # 4. تحميل واستيراد المكتبات المحددة في pubspec.yaml
+    - name: Install Dependencies
+      run: flutter pub get
+
+    # 5. إجراء الاختبارات البرمجية (خطوة اختيارية للتحقق من سلامة الكود)
+    - name: Run Tests
+      run: flutter test
+
+    # 6. بناء تطبيق أندرويد كملف APK
+    - name: Build APK
+      run: flutter build apk --release
+
+    # 7. رفع ملف الـ APK الناتج ليكون جاهزًا للتحميل من واجهة غيتهاب
+    - name: Upload APK Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-apk
+        path: build/app/outputs/flutter-apk/app-release.apk
 
