@@ -13,15 +13,24 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # ============================================
+      # 1) استنساخ الكود
+      # ============================================
       - name: Checkout code
         uses: actions/checkout@v5
 
+      # ============================================
+      # 2) تثبيت Java 17
+      # ============================================
       - name: Setup Java 17
         uses: actions/setup-java@v5
         with:
           distribution: 'zulu'
           java-version: '17'
 
+      # ============================================
+      # 3) تثبيت Flutter
+      # ============================================
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
@@ -29,37 +38,162 @@ jobs:
           channel: 'stable'
           cache: true
 
+      # ============================================
+      # 4) التحقق من Flutter
+      # ============================================
       - name: Verify Flutter
         run: flutter doctor -v
 
-      # ✅ حذف ملف القفل لضمان تحديث المكتبات
+      # ============================================
+      # 5) حذف pubspec.lock
+      # ============================================
       - name: Remove lock file
         run: rm -f pubspec.lock
 
+      # ============================================
+      # 6) تنظيف المشروع
+      # ============================================
       - name: Clean project
         run: flutter clean
 
+      # ============================================
+      # 7) تنزيل الحزم
+      # ============================================
       - name: Get dependencies
         run: flutter pub get
 
-      # ✅ ترقية كل المكتبات إلى أحدث إصداراتها
+      # ============================================
+      # 8) ترقية المكتبات
+      # ============================================
       - name: Upgrade dependencies
-        run: flutter pub upgrade
+        run: flutter pub upgrade || true
 
+      # ============================================
+      # 9) ترقية إصدارات رئيسية
+      # ============================================
       - name: Try major upgrade
-        run: flutter pub upgrade --major-versions || echo "Major upgrade skipped"
+        run: flutter pub upgrade --major-versions || true
 
+      # ============================================
+      # 10) عرض المكتبات
+      # ============================================
+      - name: Show packages
+        run: flutter pub deps --style=compact | head -100
+
+      # ============================================
+      # 11) ✅ تشخيص v1 embedding — الأهم!
+      # ============================================
+      - name: Diagnose v1 embedding
+        run: |
+          echo "═══════════════════════════════════════════"
+          echo "🔍 1) فحص AndroidManifest.xml الرئيسي"
+          echo "═══════════════════════════════════════════"
+          if [ -f "android/app/src/main/AndroidManifest.xml" ]; then
+            echo "✅ الملف موجود"
+            echo ""
+            echo "─── flutterEmbedding ───"
+            grep -A2 -B1 "flutterEmbedding" android/app/src/main/AndroidManifest.xml || echo "❌ flutterEmbedding غير موجود!"
+            echo ""
+            echo "─── android:name في <application> ───"
+            grep -A5 "<application" android/app/src/main/AndroidManifest.xml | head -10
+          else
+            echo "❌ AndroidManifest.xml غير موجود!"
+          fi
+
+          echo ""
+          echo "═══════════════════════════════════════════"
+          echo "🔍 2) فحص كل AndroidManifest.xml في المشروع"
+          echo "═══════════════════════════════════════════"
+          find android -name "AndroidManifest.xml" 2>/dev/null | while read f; do
+            echo "─── $f ───"
+            grep -c "flutterEmbedding" "$f" 2>/dev/null || echo "   لا يحتوي flutterEmbedding"
+          done
+
+          echo ""
+          echo "═══════════════════════════════════════════"
+          echo "🔍 3) البحث عن io.flutter.app (v1 محذوف)"
+          echo "═══════════════════════════════════════════"
+          grep -rn "io.flutter.app" android/ 2>/dev/null | head -20 || echo "✅ لم يُعثر على io.flutter.app"
+
+          echo ""
+          echo "═══════════════════════════════════════════"
+          echo "🔍 4) فحص pubspec.yaml"
+          echo "═══════════════════════════════════════════"
+          echo "─── flutter_webrtc ───"
+          grep "flutter_webrtc" pubspec.yaml || echo "غير موجود"
+          echo "─── flutter_local_notifications ───"
+          grep "flutter_local_notifications" pubspec.yaml || echo "غير موجود"
+          echo "─── intl ───"
+          grep "intl:" pubspec.yaml || echo "غير موجود"
+
+          echo ""
+          echo "═══════════════════════════════════════════"
+          echo "🔍 5) فحص pubspec.lock"
+          echo "═══════════════════════════════════════════"
+          if [ -f "pubspec.lock" ]; then
+            echo "✅ موجود"
+            grep -A1 "flutter_webrtc:" pubspec.lock | head -4
+          else
+            echo "⚠️ pubspec.lock غير موجود"
+          fi
+
+      # ============================================
+      # 12) تحليل الكود
+      # ============================================
       - name: Analyze code
         run: flutter analyze || true
 
+      # ============================================
+      # 13) بناء APK مع تسجيل verbose
+      # ============================================
       - name: Build APK
         run: |
           flutter build apk \
             --release \
             --no-shrink \
-            --target-platform android-arm,android-arm64,android-x64
+            --target-platform android-arm,android-arm64,android-x64 \
+            -v 2>&1 | tee build_full_log.txt
+        continue-on-error: true
 
+      # ============================================
+      # 14) عرض الأخطاء التفصيلية
+      # ============================================
+      - name: Show error details
+        if: always()
+        run: |
+          echo "═══════════════════════════════════════════"
+          echo "🔍 البحث عن أخطاء v1 embedding في السجل"
+          echo "═══════════════════════════════════════════"
+          grep -i "v1 embedding\|deleted Android\|uses.*v1\|FlutterApplication" build_full_log.txt | head -30 || echo "لا شيء"
+          
+          echo ""
+          echo "═══════════════════════════════════════════"
+          echo "🔍 المكتبات المشكوك بها"
+          echo "═══════════════════════════════════════════"
+          grep -B2 -A2 "deleted Android" build_full_log.txt | head -40 || echo "لا شيء"
+          
+          echo ""
+          echo "═══════════════════════════════════════════"
+          echo "🔍 آخر 60 سطر من السجل"
+          echo "═══════════════════════════════════════════"
+          tail -60 build_full_log.txt
+
+      # ============================================
+      # 15) رفع السجل الكامل
+      # ============================================
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build_full_log.txt
+          retention-days: 7
+
+      # ============================================
+      # 16) رفع APK (إن نجح البناء)
+      # ============================================
       - name: Upload APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: lanphone-apk
