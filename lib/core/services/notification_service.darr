@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter_callkit_incoming/entities/entities.dart';
+import 'package:flutter_callkit_incoming/entities/call_event.dart';
 import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
 
 /// ============================================================
@@ -29,14 +29,18 @@ class NotificationService extends ChangeNotifier {
   // ============================================
 
   void _init() {
-    _eventSubscription = FlutterCallkitIncoming.onEvent.listen((event) {
-      if (event == null) return;
+    try {
+      _eventSubscription = FlutterCallkitIncoming.onEvent.listen((event) {
+        if (event == null) return;
 
-      // ✅ استخدام toString بدل event.event (API تغيّر)
-      debugPrint('[NotificationService] Event: $event');
+        debugPrint('[NotificationService] Event: $event');
 
-      _eventController.add(event);
-    });
+        _eventController.add(event);
+      });
+      debugPrint('[NotificationService] Initialized');
+    } catch (e) {
+      debugPrint('[NotificationService] init error: $e');
+    }
   }
 
   @override
