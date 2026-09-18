@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 
@@ -69,13 +68,8 @@ Future<void> main() async {
     debugPrint('[main] Permission request error: $e');
   }
 
-  // 4) Callkit
-  try {
-    await FlutterCallkitIncoming.setCallkitIncomingAppName('LanPhone');
-    debugPrint('[main] Callkit initialized');
-  } catch (e) {
-    debugPrint('[main] Callkit init error: $e');
-  }
+  // 4) Callkit (يُهيَّأ تلقائيًا في الإصدار الحالي)
+  debugPrint('[main] Callkit ready');
 
   runApp(const LanPhoneApp());
 }
@@ -164,7 +158,7 @@ class LanPhoneApp extends StatelessWidget {
         ),
 
         // ==========================================
-        // 10) ✅ خدمة البث الصوتي
+        // 10) خدمة البث الصوتي
         // ==========================================
         ChangeNotifierProxyProvider2<SignalingService, DeviceDiscovery,
             BroadcastService>(
@@ -347,7 +341,7 @@ class _AppRootState extends State<_AppRoot> {
   }
 
   // ============================================
-  // === أحداث البث (جديد) ===
+  // === أحداث البث ===
   // ============================================
 
   void _onBroadcastEvent(BroadcastEvent event) {
@@ -373,7 +367,6 @@ class _AppRootState extends State<_AppRoot> {
   /// عرض دعوة بث واردة
   void _showBroadcastInvitation(BroadcastEvent event) {
     if (_broadcastDialogOpen) {
-      // رفض تلقائي إذا كان هناك حوار آخر مفتوح
       _broadcastService?.rejectBroadcast(
         event.broadcastId,
         event.peerDeviceId,
@@ -382,7 +375,6 @@ class _AppRootState extends State<_AppRoot> {
     }
 
     if (_callScreenOpen) {
-      // رفض إذا كانت هناك مكالمة
       _broadcastService?.rejectBroadcast(
         event.broadcastId,
         event.peerDeviceId,
@@ -428,7 +420,6 @@ class _AppRootState extends State<_AppRoot> {
     );
 
     if (!ok) {
-      nav.overlay?.context;
       ScaffoldMessenger.of(nav.overlay!.context).showSnackBar(
         const SnackBar(
           content: Text('تعذّر الانضمام للبث'),
@@ -445,20 +436,17 @@ class _AppRootState extends State<_AppRoot> {
   /// انتهى البث من المُذيع
   void _handleBroadcastEnded(BroadcastEvent event) {
     if (_broadcastService?.isBroadcasting ?? false) {
-      // نحن المُذيع — لا شيء
       return;
     }
 
     final nav = navigatorKey.currentState;
     if (nav == null) return;
 
-    // أغلق شاشة الاستماع
     if (_broadcastScreenOpen) {
       nav.pop();
       _broadcastScreenOpen = false;
     }
 
-    // رسالة
     ScaffoldMessenger.of(nav.overlay!.context).showSnackBar(
       SnackBar(
         content: Text('انتهى بث ${event.peerName}'),
