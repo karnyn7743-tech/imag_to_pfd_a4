@@ -122,7 +122,9 @@ class ActivationService extends ChangeNotifier {
 
       if (Platform.isAndroid) {
         final info = await plugin.androidInfo;
-        return 'ANDROID-${info.androidId}';
+        // ✅ في device_info_plus 11.x، الخاصية هي `id`
+        // (كانت `androidId` في الإصدارات الأقدم)
+        return 'ANDROID-${info.id}';
       }
 
       if (Platform.isIOS) {
