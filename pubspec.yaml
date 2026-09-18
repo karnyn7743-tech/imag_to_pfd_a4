@@ -10,49 +10,108 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+
+  # ============================================
+  # === دعم التوطين (العربية) ===
+  # ============================================
   flutter_localizations:
     sdk: flutter
 
-  # ⚠️ استخدام any لكشف المكتبة المشكِلة
-  cupertino_icons: any
-  provider: any
-  web_socket_channel: any
-  multicast_dns: any
-  flutter_webrtc: any
-  webrtc_interface: any
-  sqflite: any
-  path: any
-  path_provider: any
-  crypto: any
-  encrypt: any
-  pointycastle: any
-  permission_handler: any
-  shared_preferences: any
-  file_picker: any
-  image_picker: any
-  cached_network_image: any
-  video_player: any
-  open_filex: any
-  flutter_local_notifications: any
-  flutter_callkit_incoming: any
-  audio_session: any
-  flutter_ringtone_player: any
-  record: any
-  just_audio: any
-  uuid: any
-  device_info_plus: any
-  intl: any
-  local_auth: any
-  qr_flutter: any
-  mobile_scanner: any
+  # ============================================
+  # === الواجهة (UI) ===
+  # ============================================
+  cupertino_icons: ^1.0.8
+
+  # ============================================
+  # === إدارة الحالة (State Management) ===
+  # ============================================
+  provider: ^6.1.2
+
+  # ============================================
+  # === الشبكة المحلية (LAN) ===
+  # ============================================
+  web_socket_channel: ^3.0.1
+  multicast_dns: ^0.3.2+9
+
+  # ============================================
+  # === WebRTC (المكالمات الصوتية والفيديو) ===
+  # ============================================
+  flutter_webrtc: ^0.14.0
+  webrtc_interface: ^1.2.2+hotfix.2
+
+  # ============================================
+  # === قاعدة البيانات المحلية ===
+  # ============================================
+  sqflite: ^2.4.1
+  path: ^1.9.0
+  path_provider: ^2.1.5
+
+  # ============================================
+  # === التشفير والأمان ===
+  # ============================================
+  crypto: ^3.0.5
+  encrypt: ^5.0.3
+  pointycastle: ^3.9.1
+
+  # ============================================
+  # === الأذونات (Permissions) ===
+  # ============================================
+  permission_handler: ^12.0.0
+
+  # ============================================
+  # === التخزين المحلي للتفضيلات ===
+  # ============================================
+  shared_preferences: ^2.3.2
+
+  # ============================================
+  # === الوسائط والملفات ===
+  # ============================================
+  file_picker: ^8.1.2
+  image_picker: ^1.1.2
+  cached_network_image: ^3.4.1
+
+  # ============================================
+  # === معاينة الوسائط المتقدمة ===
+  # ============================================
+  video_player: ^2.9.2
+  open_filex: ^4.5.0
+
+  # ============================================
+  # === الإشعارات والمكالمات في الخلفية ===
+  # ============================================
+  flutter_local_notifications: ^18.0.0
+  flutter_callkit_incoming: ^3.1.5
+
+  # ============================================
+  # === الصوت ===
+  # ============================================
+  audio_session: ^0.1.22
+  flutter_ringtone_player: ^4.0.0+4
+  record: ^5.1.2
+  just_audio: ^0.9.42
+
+  # ============================================
+  # === أدوات مساعدة ===
+  # ============================================
+  uuid: ^4.5.1
+  device_info_plus: ^11.1.0
+  intl: ^0.20.2
+  local_auth: ^2.3.0
+
+  # ============================================
+  # === QR للاقتران بين الأجهزة ===
+  # ============================================
+  qr_flutter: ^4.1.0
+  mobile_scanner: ^7.1.1
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: any
+  flutter_lints: ^5.0.0
 
 flutter:
   uses-material-design: true
+
   assets:
     - assets/sounds/
     - assets/icons/
