@@ -335,6 +335,14 @@ class LocalNotificationService {
     );
   }
 
+  // ============================================
+  // === ✅ Priority from Importance (مُصحَّح) ===
+  // ============================================
+  //
+  // الإصلاح: أُضيف `default` لأن `Importance` في
+  // flutter_local_notifications 18.x يحتوي على قيمة
+  // إضافية `unspecified` لم تكن في الإصدارات القديمة.
+
   Priority _priorityFromImportance(Importance importance) {
     switch (importance) {
       case Importance.min:
@@ -347,6 +355,9 @@ class LocalNotificationService {
         return Priority.high;
       case Importance.max:
         return Priority.max;
+      default:
+        // يشمل Importance.unspecified وأي قيمة جديدة مستقبلًا
+        return Priority.defaultPriority;
     }
   }
 
