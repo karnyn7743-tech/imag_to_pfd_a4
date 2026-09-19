@@ -39,7 +39,7 @@ class _ActivationScreenState extends State<ActivationScreen> {
   }
 
   // ============================================
-  // === ✅ لصق تلقائي ذكي ===
+  // === اللصق التلقائي (ذكي) ===
   // ============================================
 
   Future<void> _autoPasteFromClipboard() async {
@@ -48,7 +48,7 @@ class _ActivationScreenState extends State<ActivationScreen> {
       final text = data?.text?.trim() ?? '';
       if (text.isEmpty) return;
 
-      // ✅ استخرج أي شيء يشبه المفتاح (16 hex + شرطات اختيارية)
+      // ✅ يستخرج أي نص يشبه المفتاح (16 hex + شرطات اختيارية)
       final match = RegExp(
         r'[A-Fa-f0-9]{4}-?[A-Fa-f0-9]{4}-?[A-Fa-f0-9]{4}-?[A-Fa-f0-9]{4}',
       ).firstMatch(text);
@@ -61,6 +61,51 @@ class _ActivationScreenState extends State<ActivationScreen> {
     } catch (e) {
       debugPrint('[Activation] autoPaste error: $e');
     }
+  }
+
+  // ============================================
+  // === لصق يدوي من الزر ===
+  // ============================================
+
+  Future<void> _pasteFromClipboard() async {
+    try {
+      final data = await Clipboard.getData('text/plain');
+      final text = data?.text?.trim() ?? '';
+      if (text.isEmpty) {
+        _showSnack('الحافظة فارغة');
+        return;
+      }
+
+      // استخرج المفتاح من النص
+      final match = RegExp(
+        r'[A-Fa-f0-9]{4}-?[A-Fa-f0-9]{4}-?[A-Fa-f0-9]{4}-?[A-Fa-f0-9]{4}',
+      ).firstMatch(text);
+
+      if (match == null) {
+        _showSnack('لم يُعثر على مفتاح صالح في الحافظة');
+        return;
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _controller.text = match.group(0)!;
+      });
+      HapticFeedback.lightImpact();
+      _showSnack('تم لصق المفتاح');
+    } catch (e) {
+      debugPrint('[Activation] paste error: $e');
+      _showSnack('تعذّر اللصق');
+    }
+  }
+
+  void _showSnack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        duration: const Duration(seconds: 2),
+      ),
+    );
   }
 
   // ============================================
@@ -189,7 +234,9 @@ class _ActivationScreenState extends State<ActivationScreen> {
 
                 const SizedBox(height: 32),
 
-                // معرّف الجهاز
+                // ============================================
+                // === بطاقة معرّف الجهاز ===
+                // ============================================
                 Container(
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
@@ -259,7 +306,7 @@ class _ActivationScreenState extends State<ActivationScreen> {
                         child: Row(
                           children: [
                             Expanded(
-                              child: Text(
+                              child: SelectableText(
                                 _showDeviceId
                                     ? service.deviceId
                                     : '••••••••••••••••••••••••••••',
@@ -349,6 +396,41 @@ class _ActivationScreenState extends State<ActivationScreen> {
                                 color: Colors.white70,
                               ),
                             ),
+                            const Spacer(),
+                            // ✅ زر لصق يدوي
+                            Material(
+                              color: AppTheme.primaryColor.withOpacity(0.2),
+                              borderRadius: BorderRadius.circular(8),
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(8),
+                                onTap: _pasteFromClipboard,
+                                child: const Padding(
+                                  padding: EdgeInsets.symmetric(
+                                    horizontal: 10,
+                                    vertical: 6,
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        Icons.content_paste,
+                                        color: AppTheme.primaryColor,
+                                        size: 16,
+                                      ),
+                                      SizedBox(width: 4),
+                                      Text(
+                                        'لصق',
+                                        style: TextStyle(
+                                          color: AppTheme.primaryColor,
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -357,8 +439,10 @@ class _ActivationScreenState extends State<ActivationScreen> {
                         focusNode: _focus,
                         textAlign: TextAlign.center,
                         textCapitalization: TextCapitalization.characters,
-                        // ✅ لا inputFormatters — يقبل اللصق بحرية
-                        // ✅ لا maxLength — يقبل أي طول
+                        // ✅ لا inputFormatters — يقبل أي نص
+                        // ✅ لا maxLength — بلا حد
+                        // ✅ enableInteractiveSelection يسمح باللصق
+                        enableInteractiveSelection: true,
                         style: const TextStyle(
                           fontSize: 20,
                           fontWeight: FontWeight.bold,
