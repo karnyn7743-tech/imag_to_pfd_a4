@@ -54,7 +54,6 @@ class DatabaseHelper {
   }
 
   Future<void> _onCreate(Database db, int version) async {
-    // جدول الأجهزة
     await db.execute('''
       CREATE TABLE $tableDevices (
         device_id     TEXT PRIMARY KEY,
@@ -71,7 +70,6 @@ class DatabaseHelper {
       )
     ''');
 
-    // جدول المحادثات
     await db.execute('''
       CREATE TABLE $tableConversations (
         conversation_id     TEXT PRIMARY KEY,
@@ -88,7 +86,6 @@ class DatabaseHelper {
       )
     ''');
 
-    // جدول الرسائل
     await db.execute('''
       CREATE TABLE $tableMessages (
         message_id       TEXT PRIMARY KEY,
@@ -114,7 +111,6 @@ class DatabaseHelper {
       )
     ''');
 
-    // جدول سجل المكالمات
     await db.execute('''
       CREATE TABLE $tableCallLogs (
         call_id          TEXT PRIMARY KEY,
@@ -129,7 +125,6 @@ class DatabaseHelper {
       )
     ''');
 
-    // ✅ جدول إعدادات الإشعارات (جديد)
     await db.execute('''
       CREATE TABLE $tableNotifSettings (
         device_id      TEXT PRIMARY KEY,
@@ -143,7 +138,6 @@ class DatabaseHelper {
       )
     ''');
 
-    // الفهارس
     await db.execute(
       'CREATE INDEX idx_messages_conversation ON $tableMessages(conversation_id)',
     );
@@ -172,7 +166,6 @@ class DatabaseHelper {
     int oldVersion,
     int newVersion,
   ) async {
-    // v1 → v2: إضافة رقم الاتصال
     if (oldVersion < 2) {
       await db.execute(
         "ALTER TABLE $tableDevices ADD COLUMN number TEXT NOT NULL DEFAULT ''",
@@ -182,7 +175,6 @@ class DatabaseHelper {
       );
     }
 
-    // v2 → v3: إضافة تثبيت الرسائل
     if (oldVersion < 3) {
       await db.execute(
         'ALTER TABLE $tableMessages ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0',
@@ -192,7 +184,6 @@ class DatabaseHelper {
       );
     }
 
-    // v3 → v4: إضافة إعدادات الإشعارات
     if (oldVersion < 4) {
       await db.execute('''
         CREATE TABLE $tableNotifSettings (
@@ -501,14 +492,87 @@ class DatabaseHelper {
   }
 
   // ============================================
-  // === CRUD: الرسائل ===
+  // === ✅ CRUD: الرسائل (مُصحَّح) ===
   // ============================================
+  //
+  // ✅ التعديل الأساسي: نتأكد من وجود:
+  //    1) الجهاز (peer_device_id)
+  //    2) المحادثة (conversation_id)
+  // قبل إدراج الرسالة — لتجنب FOREIGN KEY constraint فشل.
+  //
   Future<int> insertMessage(Map<String, dynamic> message) async {
-    return db.insert(
+    final conversationId = message['conversation_id'] as String?;
+    if (conversationId == null || conversationId.isEmpty) {
+      throw ArgumentError(
+        '[DB] insertMessage: message must have a valid conversation_id',
+      );
+    }
+
+    // ✅ 1) تأكد من وجود المحادثة
+    final existingConv = await getConversation(conversationId);
+
+    if (existingConv == null) {
+      // احسب peerId (الطرف الآخر)
+      final isOutgoing = (message['is_outgoing'] as int?) == 1;
+      final peerId = isOutgoing
+          ? (message['receiver_id'] as String?)
+          : (message['sender_id'] as String?);
+
+      if (peerId == null || peerId.isEmpty) {
+        throw ArgumentError(
+          '[DB] insertMessage: message must have sender_id or receiver_id',
+        );
+      }
+
+      // ✅ تأكد من وجود الجهاز
+      final existingDevice = await getDevice(peerId);
+      if (existingDevice == null) {
+        final now = DateTime.now().millisecondsSinceEpoch;
+        await upsertDevice({
+          'device_id': peerId,
+          'number': '',
+          'name': 'جهاز',
+          'ip_address': '0.0.0.0',
+          'port': AppConstants.signalingPort,
+          'capabilities': '[]',
+          'last_seen': now,
+          'is_favorite': 0,
+          'is_blocked': 0,
+          'created_at': now,
+        });
+        print('[DB] Auto-created device: $peerId');
+      }
+
+      // ✅ أنشئ المحادثة
+      final ts = (message['created_at'] as int?) ??
+          DateTime.now().millisecondsSinceEpoch;
+
+      await upsertConversation({
+        'conversation_id': conversationId,
+        'peer_device_id': peerId,
+        'last_message': '',
+        'last_message_type': 'text',
+        'last_message_time': ts,
+        'unread_count': 0,
+        'created_at': ts,
+      });
+
+      print('[DB] Auto-created conversation: $conversationId');
+    }
+
+    // ✅ 2) الآن أدخل الرسالة بأمان
+    final result = await db.insert(
       tableMessages,
       message,
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
+
+    print(
+      '[DB] ✅ Message inserted: ${message['message_id']} '
+      'in $conversationId',
+    );
+
+    return result;
   }
 
   Future<List<Map<String, dynamic>>> getMessages({
@@ -634,11 +698,9 @@ class DatabaseHelper {
   }
 
   // ============================================
-  // === إعدادات الإشعارات (جديد) ===
+  // === إعدادات الإشعارات ===
   // ============================================
 
-  /// احصل على إعدادات الإشعارات لجهاز معين
-  /// إذا لم تكن موجودة، يُرجع القيم الافتراضية
   Future<Map<String, dynamic>> getNotificationSettings(
     String deviceId,
   ) async {
@@ -650,7 +712,6 @@ class DatabaseHelper {
     );
 
     if (rows.isEmpty) {
-      // القيم الافتراضية
       return {
         'device_id': deviceId,
         'enabled': 1,
@@ -662,7 +723,6 @@ class DatabaseHelper {
     return rows.first;
   }
 
-  /// حفظ/تحديث إعدادات الإشعارات
   Future<int> upsertNotificationSettings({
     required String deviceId,
     required bool enabled,
@@ -685,7 +745,6 @@ class DatabaseHelper {
     );
   }
 
-  /// احصل على إعدادات كل الأجهزة (خريطة deviceId → settings)
   Future<Map<String, Map<String, dynamic>>> getAllNotificationSettings() async {
     final rows = await db.query(tableNotifSettings);
     final map = <String, Map<String, dynamic>>{};
@@ -695,7 +754,6 @@ class DatabaseHelper {
     return map;
   }
 
-  /// احصل على قائمة الأجهزة التي أُسكتت (enabled = 0)
   Future<Set<String>> getMutedDeviceIds() async {
     final rows = await db.query(
       tableNotifSettings,
