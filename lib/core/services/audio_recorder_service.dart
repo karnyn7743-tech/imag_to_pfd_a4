@@ -137,10 +137,6 @@ class AudioRecorderService {
         sampleRate: 44100,
         // مونو لتوفير المساحة
         numChannels: 1,
-        // ✅ تحسينات إضافية
-        autoGain: true,        // تحكم تلقائي بمستوى الصوت
-        echoCancel: true,      // إلغاء الصدى
-        noiseSuppress: true,   // إزالة الضجيج
       );
 
       await _recorder.start(config, path: _currentPath!);
