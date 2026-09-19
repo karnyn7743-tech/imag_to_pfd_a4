@@ -217,14 +217,35 @@ class DatabaseHelper {
   }
 
   // ============================================
-  // === CRUD: الأجهزة ===
+  // === ✅ CRUD: الأجهزة (مُصحَّح) ===
   // ============================================
+  //
+  // ⚠️ مهم: لا نستخدم ConflictAlgorithm.replace هنا
+  // لأنه يُنفّذ DELETE + INSERT، مما يُفعّل CASCADE
+  // ويحذف كل محادثات ورسائل الجهاز!
+  //
+  // الحل: نستخدم UPDATE أولًا، ثم INSERT إن لم يُوجد.
+  //
   Future<int> upsertDevice(Map<String, dynamic> device) async {
-    return db.insert(
+    final deviceId = device['device_id'] as String?;
+    if (deviceId == null || deviceId.isEmpty) {
+      throw ArgumentError('[DB] upsertDevice: device_id is required');
+    }
+
+    // ✅ 1) حاول التحديث أولًا (لا يُفعِّل cascade)
+    final updated = await db.update(
       tableDevices,
       device,
-      conflictAlgorithm: ConflictAlgorithm.replace,
+      where: 'device_id = ?',
+      whereArgs: [deviceId],
     );
+
+    if (updated > 0) {
+      return updated;
+    }
+
+    // ✅ 2) إذا لم يُوجد، أدخله جديدًا
+    return db.insert(tableDevices, device);
   }
 
   Future<List<Map<String, dynamic>>> getAllDevices() async {
@@ -291,14 +312,33 @@ class DatabaseHelper {
   }
 
   // ============================================
-  // === CRUD: المحادثات ===
+  // === ✅ CRUD: المحادثات (مُصحَّح) ===
   // ============================================
+  //
+  // نفس المبدأ: UPDATE أولًا لتجنب CASCADE.
+  //
   Future<int> upsertConversation(Map<String, dynamic> conversation) async {
-    return db.insert(
+    final conversationId = conversation['conversation_id'] as String?;
+    if (conversationId == null || conversationId.isEmpty) {
+      throw ArgumentError(
+        '[DB] upsertConversation: conversation_id is required',
+      );
+    }
+
+    // ✅ 1) حاول التحديث أولًا (لا يُفعِّل cascade)
+    final updated = await db.update(
       tableConversations,
       conversation,
-      conflictAlgorithm: ConflictAlgorithm.replace,
+      where: 'conversation_id = ?',
+      whereArgs: [conversationId],
     );
+
+    if (updated > 0) {
+      return updated;
+    }
+
+    // ✅ 2) إذا لم تُوجد، أدخلها جديدة
+    return db.insert(tableConversations, conversation);
   }
 
   Future<List<Map<String, dynamic>>> getAllConversations() async {
@@ -494,12 +534,6 @@ class DatabaseHelper {
   // ============================================
   // === ✅ CRUD: الرسائل (مُصحَّح) ===
   // ============================================
-  //
-  // ✅ التعديل الأساسي: نتأكد من وجود:
-  //    1) الجهاز (peer_device_id)
-  //    2) المحادثة (conversation_id)
-  // قبل إدراج الرسالة — لتجنب FOREIGN KEY constraint فشل.
-  //
   Future<int> insertMessage(Map<String, dynamic> message) async {
     final conversationId = message['conversation_id'] as String?;
     if (conversationId == null || conversationId.isEmpty) {
@@ -731,18 +765,30 @@ class DatabaseHelper {
   }) async {
     final now = DateTime.now().millisecondsSinceEpoch;
 
-    return db.insert(
+    // ✅ استخدام UPDATE أولًا (لتجنب CASCADE)
+    final updated = await db.update(
       tableNotifSettings,
       {
-        'device_id': deviceId,
         'enabled': enabled ? 1 : 0,
         'sound': sound ? 1 : 0,
         'vibration': vibration ? 1 : 0,
-        'created_at': now,
         'updated_at': now,
       },
-      conflictAlgorithm: ConflictAlgorithm.replace,
+      where: 'device_id = ?',
+      whereArgs: [deviceId],
     );
+
+    if (updated > 0) return updated;
+
+    // إدخال جديد
+    return db.insert(tableNotifSettings, {
+      'device_id': deviceId,
+      'enabled': enabled ? 1 : 0,
+      'sound': sound ? 1 : 0,
+      'vibration': vibration ? 1 : 0,
+      'created_at': now,
+      'updated_at': now,
+    });
   }
 
   Future<Map<String, Map<String, dynamic>>> getAllNotificationSettings() async {
