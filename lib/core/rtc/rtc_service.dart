@@ -106,11 +106,22 @@ class RtcService extends ChangeNotifier {
   final List<RTCIceCandidate> _pendingCandidates = [];
 
   // ============================================
-  // === الإعدادات ===
+  // === ✅ إعدادات ICE (مُصحَّح) ===
   // ============================================
+  //
+  // ⚠️ على Android، WebRTC يستخدم mDNS obfuscation
+  // لتشفير عناوين IP المحلية. هذا يجعل الاتصال المباشر
+  // على LAN يفشل لأنه لا يمكن حل .local names.
+  //
+  // الحل: تعيين إعدادات ICE لتشغيل الاتصال المباشر.
+  //
   final Map<String, dynamic> _iceServers = const {
     'iceServers': <Map<String, dynamic>>[],
     'sdpSemantics': 'unified-plan',
+    'iceTransportPolicy': 'all',
+    'bundlePolicy': 'max-bundle',
+    'rtcpMuxPolicy': 'require',
+    'iceCandidatePoolSize': 0,
   };
 
   final Map<String, dynamic> _audioConstraints = const {
@@ -187,23 +198,16 @@ class RtcService extends ChangeNotifier {
     await _logCallStart(direction: AppConstants.callDirectionOutgoing);
 
     try {
-      // 1) افتح الوسائط المحلية
       await _openLocalMedia(callType);
-
-      // 2) أنشئ الاتصال
       await _createPeerConnection();
-
-      // 3) أضف المسارات
       await _addLocalTracks();
 
-      // 4) أنشئ عرض SDP
       final offer = await _pc!.createOffer({
         'offerToReceiveAudio': true,
         'offerToReceiveVideo': callType == AppConstants.callTypeVideo,
       });
       await _pc!.setLocalDescription(offer);
 
-      // 5) أرسل الدعوة مع SDP
       await _signaling!.sendTo(peerDeviceId, {
         'type': AppConstants.msgCallInvite,
         'callId': _currentCallId,
@@ -263,12 +267,12 @@ class RtcService extends ChangeNotifier {
     _hasRemoteVideo = false;
     _callLogStartTime = DateTime.now();
 
-    // ✅ احفظ SDP offer من الرسالة
+    // ✅ احفظ SDP offer
     _pendingOfferSdp = msg.payload['sdp'] as String?;
     _pendingOfferType = msg.payload['sdpType'] as String? ?? 'offer';
 
     debugPrint(
-      '[RTC] 📥 Incoming call — SDP stored: '
+      '[RTC] 📥 Incoming call — SDP: '
       '${_pendingOfferSdp != null ? "YES (${_pendingOfferSdp!.length} chars)" : "NO"}',
     );
 
@@ -404,7 +408,7 @@ class RtcService extends ChangeNotifier {
   }
 
   // ============================================
-  // === ✅ قبول المكالمة (مع SDP) ===
+  // === قبول المكالمة (مع SDP) ===
   // ============================================
 
   Future<bool> acceptCall() async {
@@ -419,32 +423,24 @@ class RtcService extends ChangeNotifier {
       _callState = AppConstants.callStateConnecting;
       notifyListeners();
 
-      // 1) افتح الوسائط المحلية
       await _openLocalMedia(_callType);
-
-      // 2) أنشئ الاتصال
       await _createPeerConnection();
 
-      // 3) ✅ اضبط SDP البعيد
+      // ✅ اضبط SDP البعيد
       await _pc!.setRemoteDescription(
         RTCSessionDescription(_pendingOfferSdp!, _pendingOfferType!),
       );
       debugPrint('[RTC] ✅ Remote description set from offer');
 
-      // 4) عالج ICE المعلّقة
       await _drainPendingCandidates();
-
-      // 5) أضف المسارات المحلية
       await _addLocalTracks();
 
-      // 6) أنشئ الرد
       final answer = await _pc!.createAnswer({
         'offerToReceiveAudio': true,
         'offerToReceiveVideo': _callType == AppConstants.callTypeVideo,
       });
       await _pc!.setLocalDescription(answer);
 
-      // 7) أرسل الرد مع SDP
       await _signaling!.sendTo(_peerDeviceId, {
         'type': AppConstants.msgCallAccept,
         'callId': _currentCallId,
@@ -514,17 +510,12 @@ class RtcService extends ChangeNotifier {
     }
   }
 
-  // ============================================
-  // === ✅ معالجة قبول الطرف الآخر (SDP answer) ===
-  // ============================================
-
   Future<void> _handleCallAccept(SignalingMessage msg) async {
     if (_callState != AppConstants.callStateCalling) return;
 
     _callState = AppConstants.callStateConnecting;
     notifyListeners();
 
-    // ✅ اقرأ SDP answer من الرسالة
     final sdp = msg.payload['sdp'] as String?;
     final sdpType = msg.payload['sdpType'] as String? ?? 'answer';
 
@@ -534,7 +525,6 @@ class RtcService extends ChangeNotifier {
           RTCSessionDescription(sdp, sdpType),
         );
         debugPrint('[RTC] ✅ Remote description set from answer');
-
         await _drainPendingCandidates();
       } catch (e) {
         debugPrint('[RTC] setRemoteDescription(answer) error: $e');
