@@ -55,8 +55,9 @@ class AudioRecorderService {
     try {
       final session = await AudioSession.instance;
 
-      // تكوين للتسجيل بجودة عالية
-      await session.configure(const AudioSessionConfiguration(
+      // ✅ حذفنا const — لأن AVAudioSessionCategoryOptions
+      //    أصبح value class لا يدعم عامل | في const
+      await session.configure(AudioSessionConfiguration(
         avAudioSessionCategory: AVAudioSessionCategory.playAndRecord,
         avAudioSessionCategoryOptions:
             AVAudioSessionCategoryOptions.allowBluetooth |
@@ -66,7 +67,7 @@ class AudioRecorderService {
         avAudioSessionRouteSharingPolicy:
             AVAudioSessionRouteSharingPolicy.defaultPolicy,
         avAudioSessionSetActiveOptions: AVAudioSessionSetActiveOptions.none,
-        androidAudioAttributes: AndroidAudioAttributes(
+        androidAudioAttributes: const AndroidAudioAttributes(
           contentType: AndroidAudioContentType.speech,
           flags: AndroidAudioFlags.none,
           usage: AndroidAudioUsage.voiceCommunication,
@@ -131,11 +132,8 @@ class AudioRecorderService {
       // ✅ إعدادات تسجيل عالية الجودة (صوت أعلى وأوضح)
       const config = RecordConfig(
         encoder: AudioEncoder.aacLc,
-        // ✅ 128 kbps بدل 48 (جودة عالية، صوت أوضح وأعلى)
         bitRate: 128000,
-        // ✅ 44.1 kHz بدل 16 (جودة صوت موسيقية)
         sampleRate: 44100,
-        // مونو لتوفير المساحة
         numChannels: 1,
       );
 
@@ -166,7 +164,6 @@ class AudioRecorderService {
       _isRecording = false;
       _startedAt = null;
 
-      // ✅ حرّر جلسة الصوت
       await _releaseAudioSession();
 
       if (path == null || started == null) {
@@ -176,7 +173,6 @@ class AudioRecorderService {
 
       final durationMs = DateTime.now().difference(started).inMilliseconds;
 
-      // تحقق من وجود الملف
       final file = File(path);
       if (!await file.exists()) {
         debugPrint('[Recorder] File not found after stop');
@@ -186,7 +182,6 @@ class AudioRecorderService {
 
       final size = await file.length();
 
-      // إذا كان التسجيل قصيرًا جدًا (< 1 ثانية) → تجاهل
       if (durationMs < 1000 || size < 2000) {
         debugPrint('[Recorder] Too short — discarding');
         await file.delete();
@@ -227,7 +222,6 @@ class AudioRecorderService {
 
       await _releaseAudioSession();
 
-      // احذف الملف
       if (_currentPath != null) {
         final file = File(_currentPath!);
         if (await file.exists()) {
