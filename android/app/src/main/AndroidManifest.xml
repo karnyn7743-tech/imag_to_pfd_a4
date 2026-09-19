@@ -14,7 +14,7 @@
         android:usesPermissionFlags="neverForLocation"
         tools:targetApi="tiramisu" />
 
-    <!-- المكالمات -->
+    <!-- المكالمات والصوت -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.CAMERA" />
@@ -46,26 +46,27 @@
     <uses-permission android:name="android.permission.USE_FINGERPRINT"
         tools:targetApi="p" />
 
-    <!-- الإشعارات -->
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"
-        tools:targetApi="tiramisu" />
+    <!-- الإشعارات والتنبيهات -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
 
-    <!-- الوسائط -->
-    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"
-        tools:targetApi="tiramisu" />
-    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"
-        tools:targetApi="tiramisu" />
-    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO"
-        tools:targetApi="tiramisu" />
-    <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED"
-        tools:targetApi="upside_down_cake" />
+    <!-- ============================================================ -->
+    <!-- === أذونات التخزين والوسائط (معدلة ومحسنة) ===                 -->
+    <!-- ============================================================ -->
+    <!-- أذونات الوسائط لأجهزة Android 13+ (SDK 33+) -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <!-- إذن اختيار جزء من الصور لأجهزة Android 14+ (SDK 34+) -->
+    <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
+
+    <!-- أذونات التخزين لأجهزة Android 12 وما دون (SDK 32 أو أقل) -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
-        android:maxSdkVersion="28" />
+        android:maxSdkVersion="29" />
 
     <!-- ============================================================ -->
     <!-- === ميزات الأجهزة ===                                         -->
@@ -144,11 +145,6 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
-
-        <!-- ============================================================ -->
-        <!-- ⚠️ مهم: لا نُعلن عن مكونات flutter_callkit_incoming هنا       -->
-        <!-- لأن الحزمة تتولى ذلك تلقائيًا. أي إعلان مكرر → تعارض.       -->
-        <!-- ============================================================ -->
 
         <!-- === مستقبلات الإشعارات المحلية فقط === -->
         <receiver
