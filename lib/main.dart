@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:provider/provider.dart';
 
 import 'core/constants.dart';
@@ -45,6 +46,14 @@ Future<void> main() async {
   await SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
   ]);
+
+  // 0) ✅ تهيئة WebRTC (مهم جدًا لتعطيل mDNS على Android)
+  try {
+    await WebRTC.initialize();
+    debugPrint('[main] ✅ WebRTC initialized');
+  } catch (e) {
+    debugPrint('[main] WebRTC init error: $e');
+  }
 
   // 1) قاعدة البيانات
   try {
