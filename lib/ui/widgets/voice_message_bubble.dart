@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:audio_session/audio_session.dart';
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 
@@ -33,6 +34,7 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble> {
   AudioPlayer? _player;
   StreamSubscription<Duration>? _posSub;
   StreamSubscription<PlayerState>? _stateSub;
+  AudioSession? _session;
 
   Duration _position = Duration.zero;
   Duration _total = Duration.zero;
@@ -56,6 +58,10 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble> {
     _posSub?.cancel();
     _stateSub?.cancel();
     _player?.dispose();
+
+    // ✅ حرّر جلسة الصوت
+    _session?.setActive(false);
+
     super.dispose();
   }
 
@@ -71,8 +77,15 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble> {
         return;
       }
 
+      // ✅ 1) تكوين جلسة الصوت للتشغيل بصوت عالٍ
+      await _configureAudioSession();
+
+      // ✅ 2) إنشاء المشغل
       final player = AudioPlayer();
       _player = player;
+
+      // ✅ 3) أقصى مستوى صوت
+      await player.setVolume(1.0);
 
       final dur = await player.setFilePath(widget.filePath);
       if (dur != null && mounted) {
@@ -96,9 +109,51 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble> {
           _player?.pause();
         }
       });
+
+      debugPrint('[VoiceBubble] ✅ Player initialized');
     } catch (e) {
       debugPrint('[VoiceBubble] init error: $e');
       if (mounted) setState(() => _hasError = true);
+    }
+  }
+
+  // ============================================
+  // === ✅ تكوين جلسة الصوت ===
+  // ============================================
+  //
+  // الهدف: تشغيل الصوت عبر مكبر الصوت الرئيسي بأقصى مستوى.
+  //
+  // استخدام `speech()` يُهيئ الجلسة لأوضاع التشغيل العادية
+  // (وليس المكالمات)، مما يُفعِّل مكبر الصوت ويضمن الوضوح.
+
+  Future<void> _configureAudioSession() async {
+    try {
+      _session = await AudioSession.instance;
+
+      // ✅ وضع "تحدث/استماع" — صوت واضح ومرتفع
+      await _session!.configure(
+        const AudioSessionConfiguration(
+          avAudioSessionCategory: AVAudioSessionCategory.playback,
+          avAudioSessionCategoryOptions:
+              AVAudioSessionCategoryOptions.defaultToSpeaker,
+          avAudioSessionMode: AVAudioSessionMode.spokenAudio,
+          avAudioSessionRouteSharingPolicy:
+              AVAudioSessionRouteSharingPolicy.defaultPolicy,
+          avAudioSessionSetActiveOptions: AVAudioSessionSetActiveOptions.none,
+          androidAudioAttributes: AndroidAudioAttributes(
+            contentType: AndroidAudioContentType.speech,
+            flags: AndroidAudioFlags.none,
+            usage: AndroidAudioUsage.media,
+          ),
+          androidAudioFocusGainType:
+              AndroidAudioFocusGainType.gainTransientMayDuck,
+          androidWillPauseWhenDucked: false,
+        ),
+      );
+
+      debugPrint('[VoiceBubble] ✅ Audio session configured');
+    } catch (e) {
+      debugPrint('[VoiceBubble] configureAudioSession error: $e');
     }
   }
 
@@ -121,6 +176,12 @@ class _VoiceMessageBubbleState extends State<VoiceMessageBubble> {
 
     setState(() => _isLoading = true);
     try {
+      // ✅ فعّل جلسة الصوت
+      await _session?.setActive(true);
+
+      // ✅ تأكد من أقصى صوت قبل التشغيل
+      await _player!.setVolume(1.0);
+
       await _player!.play();
     } catch (e) {
       debugPrint('[VoiceBubble] play error: $e');
