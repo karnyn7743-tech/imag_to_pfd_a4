@@ -104,21 +104,18 @@ class RtcService extends ChangeNotifier {
   MediaStream? get remoteStream => _remoteStream;
 
   final List<RTCIceCandidate> _pendingCandidates = [];
-
-  /// علامة تُبيّن أن RemoteDescription ضُبط — لتفريغ طابور ICE في الوقت الصحيح
   bool _remoteDescriptionSet = false;
 
   // ============================================
-  // === ✅ إعدادات ICE (مُطابقة للنسخة الناجحة) ===
+  // === ✅ إعدادات ICE (مبسطة مطابقة للناجح) ===
   // ============================================
-  // على LAN بدون إنترنت لا نحتاج STUN/TURN. الإعدادات المبسطة
-  // تتفق تمامًا مع wifi_p2p_app وتضمن اتصالاً مباشرًا سريعًا.
+  // على LAN بدون إنترنت: لا STUN/TURN، فقط unified-plan.
   final Map<String, dynamic> _iceServers = const {
     'iceServers': <Map<String, dynamic>>[],
     'sdpSemantics': 'unified-plan',
   };
 
-  // ✅ قيود صوت بمعايير WebRTC الحديثة (وليست PSTN القديمة)
+  // ✅ قيود صوت بمعايير WebRTC الحديثة
   static const Map<String, dynamic> _audioConstraints = {
     'audio': {
       'echoCancellation': true,
@@ -130,7 +127,7 @@ class RtcService extends ChangeNotifier {
     },
   };
 
-  // ✅ قيود فيديو بالصيغة الحديثة (وليس mandatory/optional المهجورة)
+  // ✅ قيود فيديو بالصيغة الحديثة
   static const Map<String, dynamic> _videoConstraints = {
     'video': {
       'facingMode': 'user',
@@ -192,6 +189,10 @@ class RtcService extends ChangeNotifier {
     try {
       await _openLocalMedia(callType);
       await _createPeerConnection();
+
+      // ✅ (الإصلاح 3) فعّل جلسة الصوت لـ WebRTC بعد أن يحررها Callkit
+      await _activateAudioSessionForWebRTC();
+
       await _addLocalTracks();
 
       final offer = await _pc!.createOffer({
@@ -320,7 +321,6 @@ class RtcService extends ChangeNotifier {
           maximumCallsPerCallGroup: 1,
           audioSessionMode: 'default',
           audioSessionActive: true,
-          // ✅ 44100 بدل 8000
           audioSessionPreferredSampleRate: 44100.0,
           audioSessionPreferredIOBufferDuration: 0.02,
           supportsDTMF: false,
@@ -418,6 +418,13 @@ class RtcService extends ChangeNotifier {
       await _openLocalMedia(_callType);
       await _createPeerConnection();
 
+      // ✅ (الإصلاح 3) فعّل جلسة الصوت لـ WebRTC
+      await _activateAudioSessionForWebRTC();
+
+      // ✅ (الإصلاح 1) أضف المسارات المحلية قبل setRemoteDescription
+      await _addLocalTracks();
+
+      // الآن اضبط الوصف البعيد
       await _pc!.setRemoteDescription(
         RTCSessionDescription(_pendingOfferSdp!, _pendingOfferType!),
       );
@@ -425,7 +432,6 @@ class RtcService extends ChangeNotifier {
       debugPrint('[RTC] ✅ Remote description set from offer');
 
       await _drainPendingCandidates();
-      await _addLocalTracks();
 
       final answer = await _pc!.createAnswer({
         'offerToReceiveAudio': true,
@@ -648,7 +654,6 @@ class RtcService extends ChangeNotifier {
       candidateMap['sdpMLineIndex'] as int?,
     );
 
-    // ✅ نعتمد على علم صريح بدل getRemoteDescription() الذي قد لا يعمل على كل الأجهزة
     if (_pc == null || !_remoteDescriptionSet) {
       _pendingCandidates.add(candidate);
       debugPrint('[RTC] ICE queued (no remote desc yet)');
@@ -747,14 +752,13 @@ class RtcService extends ChangeNotifier {
   Future<void> _openLocalMedia(String callType) async {
     final constraints = <String, dynamic>{};
 
-    // ✅ نبدأ من قيود الصوت (بمعايير حديثة 44100)
     constraints.addAll(_audioConstraints);
 
-    // ✅ الفيديو صراحةً: إما constraints كاملة أو false
     if (callType == AppConstants.callTypeVideo) {
       constraints.addAll(_videoConstraints);
     } else {
-      constraints['video'] = false; // ← مهم: يمنع مسار فيديو فارغًا
+      // ✅ (الإصلاح 2) صراحةً: لا فيديو في المكالمات الصوتية
+      constraints['video'] = false;
     }
 
     _localStream = await navigator.mediaDevices.getUserMedia(constraints);
@@ -774,6 +778,21 @@ class RtcService extends ChangeNotifier {
     for (final track in _localStream!.getTracks()) {
       await _pc!.addTrack(track, _localStream!);
       debugPrint('[RTC] Added track: ${track.kind}');
+    }
+  }
+
+  /// ✅ (الإصلاح 3) — تكتيك لتحرير جلسة الصوت من Callkit وتمريرها لـ WebRTC
+  ///
+  /// flutter_callkit_incoming يستولي على AudioSession عند عرض الإشعار.
+  /// تبديل مكبر الصوت ON ثم OFF يجبر Android على إعادة تمرير الجلسة.
+  Future<void> _activateAudioSessionForWebRTC() async {
+    try {
+      await Helper.setSpeakerphoneOn(true);
+      await Future.delayed(const Duration(milliseconds: 150));
+      await Helper.setSpeakerphoneOn(false);
+      debugPrint('[RTC] 🔊 Audio session handed to WebRTC');
+    } catch (e) {
+      debugPrint('[RTC] activateAudioSession error: $e');
     }
   }
 
@@ -960,7 +979,7 @@ class RtcService extends ChangeNotifier {
     _hasRemoteVideo = false;
     _pendingOfferSdp = null;
     _pendingOfferType = null;
-    _remoteDescriptionSet = false; // ✅ تصفير العلم
+    _remoteDescriptionSet = false;
 
     try {
       await Helper.setSpeakerphoneOn(false);
