@@ -89,6 +89,7 @@ dependencies:
 
   # ✅ ترقية record من 5.x إلى 6.x (يحل مشكلة record_linux)
   record: ^5.1.2
+  record_linux: ^1.0.0
 
   just_audio: ^0.9.42
 
