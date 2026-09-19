@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:device_info_plus/device_info_plus.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -915,35 +916,117 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   // ============================================
-  // === اختيار وإرسال الوسائط ===
+  // === ✅ فحص إصدار Android ===
+  // ============================================
+
+  Future<int> _getAndroidSdkInt() async {
+    if (!Platform.isAndroid) return 0;
+    try {
+      final info = await DeviceInfoPlugin().androidInfo;
+      return info.version.sdkInt;
+    } catch (e) {
+      debugPrint('[Chat] _getAndroidSdkInt error: $e');
+      return 0;
+    }
+  }
+
+  // ============================================
+  // === ✅ الأذونات حسب النوع والإصدار ===
+  // ============================================
+
+  /// يُرجع الأذونات المطلوبة حسب:
+  ///   - نوع الوسائط (صورة / فيديو / ملف)
+  ///   - إصدار Android
+  ///
+  /// ⚠️ ملاحظة مهمة:
+  ///   - Android 13+ (SDK 33): يستخدم `photos` / `videos`
+  ///   - Android ≤ 12: يستخدم `storage`
+  ///   - الملفات: **لا تحتاج أي إذن** (SAF — Storage Access Framework)
+  Future<List<ph.Permission>> _getRequiredPermissions(
+    String mediaType,
+  ) async {
+    // ✅ الملفات: SAF → لا تحتاج أذونات
+    if (mediaType == AppConstants.mediaFile) {
+      return [];
+    }
+
+    final sdkInt = await _getAndroidSdkInt();
+
+    // iOS
+    if (!Platform.isAndroid) {
+      return [ph.Permission.photos];
+    }
+
+    // Android 13+ (SDK 33+)
+    if (sdkInt >= 33) {
+      if (mediaType == AppConstants.mediaImage) {
+        return [ph.Permission.photos];
+      } else if (mediaType == AppConstants.mediaVideo) {
+        return [ph.Permission.videos];
+      }
+      return [];
+    }
+
+    // Android ≤ 12
+    return [ph.Permission.storage];
+  }
+
+  // ============================================
+  // === ✅ اختيار وإرسال الوسائط (مُصحَّح) ===
   // ============================================
 
   Future<void> _pickAndSendMedia(String mediaType) async {
     if (_isSendingMedia) return;
 
-    final permissions = mediaType == AppConstants.mediaImage
-        ? <ph.Permission>[ph.Permission.photos]
-        : mediaType == AppConstants.mediaVideo
-            ? <ph.Permission>[ph.Permission.videos]
-            : <ph.Permission>[ph.Permission.storage];
+    // ============================================
+    // === 1) فحص الأذونات ===
+    // ============================================
+    final permissions = await _getRequiredPermissions(mediaType);
 
-    final granted = await PermissionDialog.ensure(
-      context,
-      permissions: permissions,
-      title: 'الوصول للوسائط',
-      message: 'نحتاج الإذن لإرسال الملفات',
-      icon: Icons.photo_library_outlined,
-    );
+    if (permissions.isNotEmpty) {
+      // ✅ فحص مسبق: هل الإذن ممنوح أصلًا؟
+      bool alreadyGranted = true;
+      for (final p in permissions) {
+        final status = await p.status;
+        if (!status.isGranted && !status.isLimited) {
+          alreadyGranted = false;
+          break;
+        }
+      }
 
-    if (!granted || !mounted) return;
+      if (!alreadyGranted) {
+        if (!mounted) return;
 
-    // ✅ الصور: إرسال متعدد
+        final granted = await PermissionDialog.ensure(
+          context,
+          permissions: permissions,
+          title: mediaType == AppConstants.mediaImage
+              ? 'الوصول للصور'
+              : 'الوصول للفيديو',
+          message: 'نحتاج الإذن لاختيار الوسائط',
+          icon: Icons.photo_library_outlined,
+        );
+
+        if (!granted || !mounted) {
+          _showError('لم يتم منح الإذن');
+          return;
+        }
+      }
+    }
+
+    if (!mounted) return;
+
+    // ============================================
+    // === 2) الصور: إرسال متعدد ===
+    // ============================================
     if (mediaType == AppConstants.mediaImage) {
       await _pickAndSendMultipleImages();
       return;
     }
 
-    // الفيديو والملف: إرسال فردي
+    // ============================================
+    // === 3) الفيديو والملف: إرسال فردي ===
+    // ============================================
     String? pickedPath;
 
     try {
@@ -953,6 +1036,7 @@ class _ChatScreenState extends State<ChatScreen> {
         pickedPath = await _pickFile();
       }
     } catch (e) {
+      debugPrint('[Chat] pick error: $e');
       _showError('تعذّر اختيار الملف');
       return;
     }
@@ -987,7 +1071,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   // ============================================
-  // === إرسال متعدد للصور (جديد) ===
+  // === إرسال متعدد للصور ===
   // ============================================
 
   Future<void> _pickAndSendMultipleImages() async {
@@ -1115,7 +1199,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   // ============================================
-  // === منتقي الصور والفيديو والملفات ===
+  // === منتقي الفيديو والملفات ===
   // ============================================
 
   Future<String?> _pickVideo() async {
@@ -1127,13 +1211,20 @@ class _ChatScreenState extends State<ChatScreen> {
     return file?.path;
   }
 
+  /// ✅ file_picker يستخدم SAF (Storage Access Framework)
+  ///    → لا يحتاج أي إذن على الإطلاق!
   Future<String?> _pickFile() async {
-    final result = await FilePicker.platform.pickFiles(
-      allowMultiple: false,
-      type: FileType.any,
-    );
-    if (result == null || result.files.isEmpty) return null;
-    return result.files.first.path;
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        allowMultiple: false,
+        type: FileType.any,
+      );
+      if (result == null || result.files.isEmpty) return null;
+      return result.files.first.path;
+    } catch (e) {
+      debugPrint('[Chat] _pickFile error: $e');
+      return null;
+    }
   }
 
   void _showError(String msg) {
@@ -1237,7 +1328,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   // ============================================
-  // === شريط التقدّم المتعدد (جديد) ===
+  // === شريط التقدّم المتعدد ===
   // ============================================
 
   Widget _buildMultiSendProgressBar(bool isDark) {
@@ -2033,7 +2124,6 @@ class _ChatScreenState extends State<ChatScreen> {
                 ],
               ),
               const SizedBox(height: 8),
-              // تلميح
               Text(
                 'يمكنك اختيار عدة صور دفعة واحدة',
                 style: TextStyle(
