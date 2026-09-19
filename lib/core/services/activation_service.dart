@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:android_id/android_id.dart';
 import 'package:crypto/crypto.dart';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
@@ -10,7 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// خدمة تنشيط التطبيق
 /// ------------------------------------------------
 /// كل مفتاح مُشتق رياضياً من:
-///   1) معرّف هذا الجهاز (Android ID / iOS identifierForVendor)
+///   1) معرّف هذا الجهاز (Android ID الحقيقي / iOS identifierForVendor)
 ///   2) سر هذا التطبيق (خاص بمشروع LanPhone فقط)
 ///   3) معرّف التطبيق الصريح (يضمن عدم التسريب لتطبيقات أخرى)
 ///
@@ -113,20 +114,55 @@ class ActivationService extends ChangeNotifier {
   }
 
   // ============================================
-  // === معرّف الجهاز الثابت ===
+  // === معرّف الجهاز الثابت (مُحدَّث) ===
   // ============================================
 
   Future<String> _getStableDeviceId() async {
     try {
-      final plugin = DeviceInfoPlugin();
-
       if (Platform.isAndroid) {
-        final info = await plugin.androidInfo;
-        // في device_info_plus 11.x، الخاصية هي `id`
-        return 'ANDROID-${info.id}';
+        // ✅ المحاولة الأولى: Android ID الحقيقي
+        // (16 حرف hex — فريد لكل جهاز، حتى بين نفس الموديل)
+        try {
+          const androidId = AndroidId();
+          final id = await androidId.getId();
+          if (id != null &&
+              id.isNotEmpty &&
+              id != 'unknown' &&
+              id != '0') {
+            debugPrint('[Activation] ✅ Real Android ID: $id');
+            return 'ANDROID-$id';
+          }
+        } catch (e) {
+          debugPrint('[Activation] android_id package error: $e');
+        }
+
+        // ⚠️ Fallback: إذا فشل Android ID → استخدم device_info_plus
+        // لكن هذا قد يُعطي نفس المعرّف للأجهزة المتطابقة
+        try {
+          final plugin = DeviceInfoPlugin();
+          final info = await plugin.androidInfo;
+          final fallbackId =
+              '${info.id}-${info.fingerprint.hashCode}-${info.device.hashCode}';
+          debugPrint('[Activation] ⚠️ Fallback device ID: $fallbackId');
+          return 'ANDROID-$fallbackId';
+        } catch (e) {
+          debugPrint('[Activation] device_info_plus error: $e');
+        }
+
+        // آخر حل: معرّف عشوائي محفوظ
+        final prefs = await SharedPreferences.getInstance();
+        var fallback = prefs.getString('fallback_device_id');
+        if (fallback == null || fallback.isEmpty) {
+          fallback =
+              'fallback-${DateTime.now().millisecondsSinceEpoch}-${identityHashCode(this)}';
+          await prefs.setString('fallback_device_id', fallback);
+        }
+        debugPrint('[Activation] ⚠️ Emergency fallback: $fallback');
+        return 'ANDROID-$fallback';
       }
 
       if (Platform.isIOS) {
+        final plugin = DeviceInfoPlugin();
         final info = await plugin.iosInfo;
         return 'IOS-${info.identifierForVendor ?? ''}';
       }
