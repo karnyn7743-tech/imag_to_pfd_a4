@@ -12,14 +12,11 @@ import '../discovery/device_discovery.dart';
 import '../discovery/discovered_device.dart';
 
 /// ============================================================
-/// خدمة التحكم (Signaling Service)
+/// خدمة التحكم (Signaling Service) - نسخة محسنة ومستقرة
 /// ============================================================
 class SignalingService extends ChangeNotifier {
   SignalingService();
 
-  // ============================================
-  // === المراجع ===
-  // ============================================
   DeviceDiscovery? _discovery;
 
   void attachDiscovery(DeviceDiscovery discovery) {
@@ -28,9 +25,6 @@ class SignalingService extends ChangeNotifier {
     _discovery!.addListener(_onDiscoveryChanged);
   }
 
-  // ============================================
-  // === الحالة ===
-  // ============================================
   bool _isRunning = false;
   bool get isRunning => _isRunning;
 
@@ -40,7 +34,6 @@ class SignalingService extends ChangeNotifier {
   final Map<String, WebSocketChannel> _channels = {};
   final Map<WebSocketChannel, String> _pendingIncoming = {};
 
-  /// الأجهزة المحظورة (cache للفحص السريع)
   Set<String> _blockedDeviceIds = {};
 
   Future<void> refreshBlockedDevices() async {
@@ -96,9 +89,9 @@ class SignalingService extends ChangeNotifier {
         onError: (e) => debugPrint('[Signaling] Server error: $e'),
       );
 
-      // ✅ حمّل قائمة المحظورين
       await refreshBlockedDevices();
 
+      _keepAliveTimer?.cancel();
       _keepAliveTimer = Timer.periodic(
         const Duration(seconds: AppConstants.keepAliveSeconds),
         (_) => _sendKeepAlive(),
@@ -181,10 +174,9 @@ class SignalingService extends ChangeNotifier {
     try {
       final text = data is String ? data : utf8.decode(data as List<int>);
       final json = jsonDecode(text) as Map<String, dynamic>;
-      final type = json['type'] as String? ?? '';
 
       final pendingId = _pendingIncoming[channel];
-      if (pendingId != null && pendingId.isEmpty) {
+      if (pendingId != null) {
         final deviceId = json['deviceId'] as String? ??
             json['from'] as String? ??
             '';
@@ -194,7 +186,6 @@ class SignalingService extends ChangeNotifier {
           return;
         }
 
-        // ✅ ارفض الاتصال من جهاز محظور
         if (_blockedDeviceIds.contains(deviceId)) {
           debugPrint(
             '[Signaling] Rejected connection from blocked: $deviceId',
@@ -229,7 +220,6 @@ class SignalingService extends ChangeNotifier {
   Future<bool> connectTo(String deviceId) async {
     if (_isConnected(deviceId)) return true;
 
-    // ✅ لا تتصل بجهاز محظور
     if (_blockedDeviceIds.contains(deviceId)) {
       debugPrint('[Signaling] Cannot connect to blocked: $deviceId');
       return false;
@@ -248,11 +238,7 @@ class SignalingService extends ChangeNotifier {
     _reconnectTimers[device.deviceId]?.cancel();
     _reconnectTimers.remove(device.deviceId);
 
-    // ✅ تحقق من الحظر
     if (_blockedDeviceIds.contains(device.deviceId)) {
-      debugPrint(
-        '[Signaling] Refusing connect to blocked: ${device.deviceId}',
-      );
       return false;
     }
 
@@ -300,7 +286,6 @@ class SignalingService extends ChangeNotifier {
       return true;
     } catch (e) {
       debugPrint('[Signaling] Connect to ${device.deviceId} failed: $e');
-      _scheduleReconnect(device.deviceId);
       return false;
     }
   }
@@ -332,34 +317,9 @@ class SignalingService extends ChangeNotifier {
         isIncoming: false,
       ));
       notifyListeners();
-
-      if (_discovery?.isDeviceOnline(deviceId) ?? false) {
-        _scheduleReconnect(deviceId);
-      }
     }
 
     _pendingIncoming.remove(channel);
-  }
-
-  // ============================================
-  // === إعادة الاتصال ===
-  // ============================================
-
-  void _scheduleReconnect(String deviceId) {
-    if (_reconnectTimers.containsKey(deviceId)) return;
-    if (_blockedDeviceIds.contains(deviceId)) return;
-
-    _reconnectTimers[deviceId] = Timer(
-      const Duration(seconds: 3),
-      () async {
-        _reconnectTimers.remove(deviceId);
-        if (!_isConnected(deviceId) &&
-            !_blockedDeviceIds.contains(deviceId) &&
-            (_discovery?.isDeviceOnline(deviceId) ?? false)) {
-          await connectTo(deviceId);
-        }
-      },
-    );
   }
 
   // ============================================
@@ -367,9 +327,7 @@ class SignalingService extends ChangeNotifier {
   // ============================================
 
   Future<bool> sendTo(String deviceId, Map<String, dynamic> payload) async {
-    // ✅ لا ترسل لجهاز محظور
     if (_blockedDeviceIds.contains(deviceId)) {
-      debugPrint('[Signaling] Cannot send to blocked: $deviceId');
       return false;
     }
 
@@ -386,15 +344,6 @@ class SignalingService extends ChangeNotifier {
     if (channel == null) return false;
 
     return _send(channel, payload);
-  }
-
-  Future<void> broadcastTo(
-    List<String> deviceIds,
-    Map<String, dynamic> payload,
-  ) async {
-    for (final id in deviceIds) {
-      await sendTo(id, Map<String, dynamic>.from(payload));
-    }
   }
 
   bool _send(WebSocketChannel channel, Map<String, dynamic> payload) {
@@ -439,10 +388,8 @@ class SignalingService extends ChangeNotifier {
 
     if (type == AppConstants.msgPong) return;
 
-    // ✅ تجاهل الرسائل من محظورين
     final from = json['from'] as String? ?? '';
     if (from.isNotEmpty && _blockedDeviceIds.contains(from)) {
-      debugPrint('[Signaling] Ignored message from blocked: $from');
       return;
     }
 
@@ -455,18 +402,12 @@ class SignalingService extends ChangeNotifier {
     ));
   }
 
-  // ============================================
-  // === أحداث الاكتشاف ===
-  // ============================================
-
   void _onDiscoveryChanged() {
     final discovery = _discovery;
     if (discovery == null) return;
 
     for (final device in discovery.onlineDevices) {
-      // ✅ تجاهل المحظورين
       if (_blockedDeviceIds.contains(device.deviceId)) continue;
-
       if (!_isConnected(device.deviceId)) {
         if (!_reconnectTimers.containsKey(device.deviceId)) {
           _connectToDevice(device);
@@ -474,10 +415,6 @@ class SignalingService extends ChangeNotifier {
       }
     }
   }
-
-  // ============================================
-  // === أدوات ===
-  // ============================================
 
   bool _isConnected(String deviceId) {
     final ch = _channels[deviceId];
@@ -523,10 +460,6 @@ class SignalingService extends ChangeNotifier {
     }
   }
 }
-
-// ============================================================
-// === نماذج ===
-// ============================================================
 
 class SignalingMessage {
   final String from;
