@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../core/constants.dart';
+import '../../core/discovery/discovered_device.dart';
 import '../../core/discovery/device_discovery.dart';
 import '../../core/rtc/rtc_service.dart';
 import '../../core/services/ringtone_service.dart';
@@ -10,10 +13,7 @@ import 'audio_call_screen.dart';
 import 'video_call_screen.dart';
 
 /// ============================================================
-/// شاشة المكالمة الواردة (Fallback)
-/// --------------------------------------------------------
-/// ملاحظة: مع flutter_callkit_incoming، واجهة المكالمة
-/// الواردة تُعرض عبر النظام مباشرة. هذه الشاشة احتياطية.
+/// شاشة المكالمة الواردة (احتياطية ومُصلحة)
 /// ============================================================
 class IncomingCallScreen extends StatefulWidget {
   final String callId;
@@ -35,17 +35,11 @@ class IncomingCallScreen extends StatefulWidget {
 
 class _IncomingCallScreenState extends State<IncomingCallScreen>
     with SingleTickerProviderStateMixin {
-  // ============================================
-  // === المراجع ===
-  // ============================================
-  RingtoneService? _ringtoneService; // ✅ جديد
+  RingtoneService? _ringtoneService;
+  StreamSubscription<RtcEvent>? _rtcEventSub;
 
   late AnimationController _pulseController;
   bool _isHandling = false;
-
-  // ============================================
-  // === دورة الحياة ===
-  // ============================================
 
   @override
   void initState() {
@@ -56,25 +50,42 @@ class _IncomingCallScreenState extends State<IncomingCallScreen>
       duration: const Duration(milliseconds: 1500),
     )..repeat(reverse: true);
 
-    // ✅ احفظ المرجع قبل postFrameCallback
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
+
       _ringtoneService = context.read<RingtoneService>();
       await _ringtoneService!.startRinging();
+
+      final rtc = context.read<RtcService>();
+      // الاستماع لو قام المتصل بإلغاء المكالمة أثناء الرنين
+      _rtcEventSub = rtc.events.listen(_onRtcEvent);
     });
   }
 
   @override
   void dispose() {
-    // ✅ استخدم المرجع المحفوظ بدل context
+    _rtcEventSub?.cancel();
     _ringtoneService?.stopRinging();
     _pulseController.dispose();
     super.dispose();
   }
 
-  // ============================================
-  // === القبول ===
-  // ============================================
+  void _onRtcEvent(RtcEvent event) {
+    if (event.peerDeviceId != widget.peerDeviceId) return;
+
+    // إلغاء المكالمة من المتصل أو حدوث خطأ
+    if (event.type == RtcEventType.callEnded ||
+        event.type == RtcEventType.error) {
+      _closeScreen();
+    }
+  }
+
+  void _closeScreen() {
+    if (_isHandling || !mounted) return;
+    _isHandling = true;
+    _ringtoneService?.stopRinging();
+    Navigator.of(context).pop();
+  }
 
   Future<void> _accept() async {
     if (_isHandling) return;
@@ -99,12 +110,15 @@ class _IncomingCallScreenState extends State<IncomingCallScreen>
     }
 
     final discovery = context.read<DeviceDiscovery>();
-    final peer = discovery.getDevice(widget.peerDeviceId);
-
-    if (peer == null) {
-      Navigator.of(context).pop();
-      return;
-    }
+    // إن لم يكن الجهاز متواجدًا في كشف الأجهزة المحلي، أنشئ كائناً مؤقتاً
+    final peer = discovery.getDevice(widget.peerDeviceId) ??
+        DiscoveredDevice(
+          deviceId: widget.peerDeviceId,
+          name: widget.peerName,
+          ip: '',
+          port: 0,
+          lastSeen: DateTime.now(),
+        );
 
     final Widget screen = widget.callType == AppConstants.callTypeVideo
         ? VideoCallScreen(peer: peer, isCaller: false)
@@ -115,24 +129,18 @@ class _IncomingCallScreenState extends State<IncomingCallScreen>
     );
   }
 
-  // ============================================
-  // === الرفض ===
-  // ============================================
-
   Future<void> _reject() async {
     if (_isHandling) return;
     _isHandling = true;
 
     _ringtoneService?.stopRinging();
 
-    await context.read<RtcService>().rejectCall();
+    try {
+      await context.read<RtcService>().rejectCall();
+    } catch (_) {}
 
     if (mounted) Navigator.of(context).pop();
   }
-
-  // ============================================
-  // === الواجهة ===
-  // ============================================
 
   @override
   Widget build(BuildContext context) {
@@ -140,7 +148,7 @@ class _IncomingCallScreenState extends State<IncomingCallScreen>
 
     return PopScope(
       canPop: false,
-      onPopInvoked: (didPop) {
+      onPopInvokedWithResult: (didPop, result) {
         if (!didPop && !_isHandling) _reject();
       },
       child: Scaffold(
@@ -159,9 +167,7 @@ class _IncomingCallScreenState extends State<IncomingCallScreen>
             ),
             child: Column(
               children: [
-                // ============================================
-                // === معلومات المتصل ===
-                // ============================================
+                // معلومات المتصل
                 Expanded(
                   flex: 5,
                   child: Column(
@@ -180,9 +186,7 @@ class _IncomingCallScreenState extends State<IncomingCallScreen>
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Icon(
-                              isVideo
-                                  ? Icons.videocam
-                                  : Icons.call_outlined,
+                              isVideo ? Icons.videocam : Icons.call_outlined,
                               size: 16,
                               color: Colors.white.withOpacity(0.9),
                             ),
@@ -205,8 +209,7 @@ class _IncomingCallScreenState extends State<IncomingCallScreen>
                       AnimatedBuilder(
                         animation: _pulseController,
                         builder: (context, child) {
-                          final scale =
-                              1.0 + (_pulseController.value * 0.08);
+                          final scale = 1.0 + (_pulseController.value * 0.08);
                           return Transform.scale(
                             scale: scale,
                             child: child,
@@ -216,12 +219,10 @@ class _IncomingCallScreenState extends State<IncomingCallScreen>
                           width: 140,
                           height: 140,
                           decoration: BoxDecoration(
-                            color:
-                                AppTheme.primaryColor.withOpacity(0.25),
+                            color: AppTheme.primaryColor.withOpacity(0.25),
                             shape: BoxShape.circle,
                             border: Border.all(
-                              color:
-                                  AppTheme.primaryColor.withOpacity(0.5),
+                              color: AppTheme.primaryColor.withOpacity(0.5),
                               width: 3,
                             ),
                           ),
@@ -265,9 +266,7 @@ class _IncomingCallScreenState extends State<IncomingCallScreen>
                   ),
                 ),
 
-                // ============================================
-                // === أزرار القبول والرفض ===
-                // ============================================
+                // أزرار التحكم
                 Expanded(
                   flex: 3,
                   child: Container(
@@ -285,9 +284,7 @@ class _IncomingCallScreenState extends State<IncomingCallScreen>
                               onTap: _reject,
                             ),
                             _ActionButton(
-                              icon: isVideo
-                                  ? Icons.videocam
-                                  : Icons.call,
+                              icon: isVideo ? Icons.videocam : Icons.call,
                               label: 'قبول',
                               color: AppTheme.successColor,
                               onTap: _accept,
@@ -307,9 +304,6 @@ class _IncomingCallScreenState extends State<IncomingCallScreen>
   }
 }
 
-// ============================================================
-// === زر إجراء ===
-// ============================================================
 class _ActionButton extends StatelessWidget {
   final IconData icon;
   final String label;
