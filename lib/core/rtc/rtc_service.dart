@@ -105,46 +105,38 @@ class RtcService extends ChangeNotifier {
 
   final List<RTCIceCandidate> _pendingCandidates = [];
 
+  /// علامة تُبيّن أن RemoteDescription ضُبط — لتفريغ طابور ICE في الوقت الصحيح
+  bool _remoteDescriptionSet = false;
+
   // ============================================
-  // === ✅ إعدادات ICE (مُصحَّح) ===
+  // === ✅ إعدادات ICE (مُطابقة للنسخة الناجحة) ===
   // ============================================
-  //
-  // ⚠️ على Android، WebRTC يستخدم mDNS obfuscation
-  // لتشفير عناوين IP المحلية. هذا يجعل الاتصال المباشر
-  // على LAN يفشل لأنه لا يمكن حل .local names.
-  //
-  // الحل: تعيين إعدادات ICE لتشغيل الاتصال المباشر.
-  //
+  // على LAN بدون إنترنت لا نحتاج STUN/TURN. الإعدادات المبسطة
+  // تتفق تمامًا مع wifi_p2p_app وتضمن اتصالاً مباشرًا سريعًا.
   final Map<String, dynamic> _iceServers = const {
     'iceServers': <Map<String, dynamic>>[],
     'sdpSemantics': 'unified-plan',
-    'iceTransportPolicy': 'all',
-    'bundlePolicy': 'max-bundle',
-    'rtcpMuxPolicy': 'require',
-    'iceCandidatePoolSize': 0,
   };
 
-  final Map<String, dynamic> _audioConstraints = const {
+  // ✅ قيود صوت بمعايير WebRTC الحديثة (وليست PSTN القديمة)
+  static const Map<String, dynamic> _audioConstraints = {
     'audio': {
       'echoCancellation': true,
       'noiseSuppression': true,
       'autoGainControl': true,
-      'sampleRate': 8000,
+      'sampleRate': 44100,
+      'sampleSize': 16,
       'channelCount': 1,
     },
   };
 
-  final Map<String, dynamic> _videoConstraints = const {
+  // ✅ قيود فيديو بالصيغة الحديثة (وليس mandatory/optional المهجورة)
+  static const Map<String, dynamic> _videoConstraints = {
     'video': {
-      'mandatory': {
-        'minWidth': '320',
-        'minHeight': '240',
-        'maxWidth': '640',
-        'maxHeight': '480',
-        'minFrameRate': '15',
-        'maxFrameRate': '20',
-      },
-      'optional': <Map<String, dynamic>>[],
+      'facingMode': 'user',
+      'width': 640,
+      'height': 480,
+      'frameRate': 30,
     },
   };
 
@@ -267,7 +259,6 @@ class RtcService extends ChangeNotifier {
     _hasRemoteVideo = false;
     _callLogStartTime = DateTime.now();
 
-    // ✅ احفظ SDP offer
     _pendingOfferSdp = msg.payload['sdp'] as String?;
     _pendingOfferType = msg.payload['sdpType'] as String? ?? 'offer';
 
@@ -329,7 +320,8 @@ class RtcService extends ChangeNotifier {
           maximumCallsPerCallGroup: 1,
           audioSessionMode: 'default',
           audioSessionActive: true,
-          audioSessionPreferredSampleRate: 8000.0,
+          // ✅ 44100 بدل 8000
+          audioSessionPreferredSampleRate: 44100.0,
           audioSessionPreferredIOBufferDuration: 0.02,
           supportsDTMF: false,
           supportsHolding: false,
@@ -426,10 +418,10 @@ class RtcService extends ChangeNotifier {
       await _openLocalMedia(_callType);
       await _createPeerConnection();
 
-      // ✅ اضبط SDP البعيد
       await _pc!.setRemoteDescription(
         RTCSessionDescription(_pendingOfferSdp!, _pendingOfferType!),
       );
+      _remoteDescriptionSet = true;
       debugPrint('[RTC] ✅ Remote description set from offer');
 
       await _drainPendingCandidates();
@@ -524,6 +516,7 @@ class RtcService extends ChangeNotifier {
         await _pc!.setRemoteDescription(
           RTCSessionDescription(sdp, sdpType),
         );
+        _remoteDescriptionSet = true;
         debugPrint('[RTC] ✅ Remote description set from answer');
         await _drainPendingCandidates();
       } catch (e) {
@@ -610,6 +603,7 @@ class RtcService extends ChangeNotifier {
       final type = msg.payload['sdpType'] as String? ?? 'offer';
 
       await _pc!.setRemoteDescription(RTCSessionDescription(sdp, type));
+      _remoteDescriptionSet = true;
       await _drainPendingCandidates();
 
       final answer = await _pc!.createAnswer({
@@ -637,6 +631,7 @@ class RtcService extends ChangeNotifier {
       final sdp = msg.payload['sdp'] as String;
       final type = msg.payload['sdpType'] as String? ?? 'answer';
       await _pc!.setRemoteDescription(RTCSessionDescription(sdp, type));
+      _remoteDescriptionSet = true;
       await _drainPendingCandidates();
     } catch (e) {
       debugPrint('[RTC] handleSdpAnswer error: $e');
@@ -653,7 +648,8 @@ class RtcService extends ChangeNotifier {
       candidateMap['sdpMLineIndex'] as int?,
     );
 
-    if (_pc == null || _pc!.getRemoteDescription() == null) {
+    // ✅ نعتمد على علم صريح بدل getRemoteDescription() الذي قد لا يعمل على كل الأجهزة
+    if (_pc == null || !_remoteDescriptionSet) {
       _pendingCandidates.add(candidate);
       debugPrint('[RTC] ICE queued (no remote desc yet)');
       return;
@@ -683,12 +679,8 @@ class RtcService extends ChangeNotifier {
   // ============================================
 
   Future<void> _createPeerConnection() async {
-    _pc = await createPeerConnection(_iceServers, {
-      'mandatory': {},
-      'optional': [
-        {'DtlsSrtpKeyAgreement': true},
-      ],
-    });
+    // ✅ استدعاء حديث بدون المعامل الثاني المهجور
+    _pc = await createPeerConnection(_iceServers);
 
     _pc!.onIceCandidate = (candidate) async {
       if (candidate.candidate == null) return;
@@ -754,15 +746,22 @@ class RtcService extends ChangeNotifier {
 
   Future<void> _openLocalMedia(String callType) async {
     final constraints = <String, dynamic>{};
+
+    // ✅ نبدأ من قيود الصوت (بمعايير حديثة 44100)
     constraints.addAll(_audioConstraints);
 
+    // ✅ الفيديو صراحةً: إما constraints كاملة أو false
     if (callType == AppConstants.callTypeVideo) {
       constraints.addAll(_videoConstraints);
+    } else {
+      constraints['video'] = false; // ← مهم: يمنع مسار فيديو فارغًا
     }
 
     _localStream = await navigator.mediaDevices.getUserMedia(constraints);
     debugPrint(
-      '[RTC] Local stream: ${_localStream!.getTracks().length} tracks',
+      '[RTC] Local stream: ${_localStream!.getTracks().length} tracks '
+      '(audio: ${_localStream!.getAudioTracks().length}, '
+      'video: ${_localStream!.getVideoTracks().length})',
     );
 
     if (callType != AppConstants.callTypeVideo) {
@@ -961,6 +960,7 @@ class RtcService extends ChangeNotifier {
     _hasRemoteVideo = false;
     _pendingOfferSdp = null;
     _pendingOfferType = null;
+    _remoteDescriptionSet = false; // ✅ تصفير العلم
 
     try {
       await Helper.setSpeakerphoneOn(false);
