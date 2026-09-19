@@ -1,19 +1,21 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:local_auth/local_auth.dart';
+import 'package:local_auth/error_codes.dart' as auth_error;
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// ============================================================
 /// فترات القفل التلقائي
 /// ============================================================
 enum LockDelay {
-  immediately, // فورًا
-  after30s, // بعد 30 ثانية
-  after1min, // بعد دقيقة
-  after5min, // بعد 5 دقائق
-  never, // أبدًا (يدوي فقط)
+  immediately,
+  after30s,
+  after1min,
+  after5min,
+  never,
 }
 
 extension LockDelayExt on LockDelay {
@@ -134,17 +136,14 @@ class LockService extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> _load() async {
     try {
-      // 1) فحص توفر البصمة
       await _checkAvailability();
 
-      // 2) تحميل الإعدادات
       final prefs = await SharedPreferences.getInstance();
       _enabled = prefs.getBool(_keyEnabled) ?? false;
 
       final delayKey = prefs.getString(_keyDelay) ?? 'immediately';
       _delay = _fromString(delayKey);
 
-      // 3) إذا كان القفل مُفعَّلًا، اقفل التطبيق عند البدء
       if (_enabled) {
         _isLocked = true;
       }
@@ -196,6 +195,11 @@ class LockService extends ChangeNotifier with WidgetsBindingObserver {
 
     _enabled = value;
 
+    // عند التفعيل → ابقَ غير مقفل مؤقتًا
+    if (value) {
+      _isLocked = false;
+    }
+
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_keyEnabled, value);
@@ -222,7 +226,6 @@ class LockService extends ChangeNotifier with WidgetsBindingObserver {
   // === القفل / الفتح ===
   // ============================================
 
-  /// اقفل التطبيق يدويًا
   void lock() {
     if (!_enabled) return;
     if (_isLocked) return;
@@ -230,15 +233,27 @@ class LockService extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  /// افتح التطبيق يدويًا (بدون مصادقة — للاستخدام الداخلي)
   void unlock() {
     if (!_isLocked) return;
     _isLocked = false;
     notifyListeners();
   }
 
-  /// فتح بالمصادقة
+  // ============================================
+  // === المصادقة العامة ===
+  // ============================================
+
   Future<bool> authenticate() async {
+    // ✅ منع التشغيل المتزامن
+    if (_isAuthenticating) {
+      debugPrint('[Lock] authenticate: already in progress');
+      return false;
+    }
+
+    // ✅ مسح أي خطأ سابق قبل البدء
+    _lastError = null;
+    notifyListeners();
+
     final ok = await _authenticate(
       reason: 'افتح LanPhone للمتابعة',
     );
@@ -246,9 +261,12 @@ class LockService extends ChangeNotifier with WidgetsBindingObserver {
     if (ok) {
       _isLocked = false;
       _lastError = null;
-      notifyListeners();
+      debugPrint('[Lock] Unlocked successfully');
+    } else {
+      debugPrint('[Lock] Unlock failed: $_lastError');
     }
 
+    notifyListeners();
     return ok;
   }
 
@@ -257,7 +275,10 @@ class LockService extends ChangeNotifier with WidgetsBindingObserver {
   // ============================================
 
   Future<bool> _authenticate({required String reason}) async {
-    if (_isAuthenticating) return false;
+    if (_isAuthenticating) {
+      debugPrint('[Lock] _authenticate: busy');
+      return false;
+    }
 
     if (!_available) {
       _lastError = 'البصمة غير متوفرة على هذا الجهاز';
@@ -269,43 +290,67 @@ class LockService extends ChangeNotifier with WidgetsBindingObserver {
     _lastError = null;
     notifyListeners();
 
+    bool result = false;
+    String? errorMsg;
+
     try {
-      final ok = await _auth.authenticate(
+      result = await _auth.authenticate(
         localizedReason: reason,
         options: const AuthenticationOptions(
-          biometricOnly: false, // اسمح بـ PIN/Pattern كبديل
-          stickyAuth: true, // ابقَ في المقدمة أثناء المصادقة
-          useErrorDialogs: true,
+          // ✅ السماح بـ PIN/Pattern/Password كبديل
+          biometricOnly: false,
+          // ✅ مهم: لا تحتفظ بالجلسة (السبب الأساسي للمشكلة)
+          stickyAuth: false,
+          // ✅ لا نعتمد على حوارات النظام
+          useErrorDialogs: false,
+          // ✅ معاملة حساسة → أمان أعلى
+          sensitiveTransaction: true,
         ),
       );
 
-      _isAuthenticating = false;
-      notifyListeners();
-      return ok;
+      debugPrint('[Lock] _authenticate result: $result');
+    } on PlatformException catch (e) {
+      debugPrint('[Lock] PlatformException: ${e.code} - ${e.message}');
+      errorMsg = _parseError(e);
     } catch (e) {
       debugPrint('[Lock] authenticate error: $e');
+      errorMsg = 'حدث خطأ غير متوقع';
+    } finally {
       _isAuthenticating = false;
-      _lastError = _parseError(e);
+
+      if (errorMsg != null) {
+        _lastError = errorMsg;
+      } else if (!result) {
+        _lastError = 'تم إلغاء التحقق أو فشل';
+      }
+
       notifyListeners();
-      return false;
     }
+
+    return result;
   }
 
-  String _parseError(Object e) {
-    final s = e.toString().toLowerCase();
-    if (s.contains('not enrolled') || s.contains('no biometrics')) {
-      return 'لا توجد بصمات مسجّلة. أضف بصمة من إعدادات النظام.';
+  // ============================================
+  // === تحليل أخطاء local_auth ===
+  // ============================================
+
+  String _parseError(PlatformException e) {
+    switch (e.code) {
+      case auth_error.notAvailable:
+        return 'البصمة غير متوفرة على هذا الجهاز';
+      case auth_error.notEnrolled:
+        return 'لا توجد بصمات مسجّلة. أضف بصمة من إعدادات النظام.';
+      case auth_error.lockedOut:
+        return 'محاولات كثيرة خاطئة. انتظر قليلًا ثم حاول مجددًا.';
+      case auth_error.permanentlyLockedOut:
+        return 'تم قفل البصمة نهائيًا. افتح ببصمة الجهاز أو أعد تسجيلها.';
+      case auth_error.passcodeNotSet:
+        return 'لا يوجد قفل شاشة. يجب تفعيل بصمة أو رمز على الجهاز.';
+      case auth_error.otherOperatingSystem:
+        return 'خطأ في النظام. أعد تشغيل التطبيق.';
+      default:
+        return 'تعذّر التحقق (${e.code})';
     }
-    if (s.contains('locked out') || s.contains('too many')) {
-      return 'محاولات كثيرة خاطئة. جرّب لاحقًا.';
-    }
-    if (s.contains('not available') || s.contains('not supported')) {
-      return 'البصمة غير متوفرة على هذا الجهاز.';
-    }
-    if (s.contains('canceled') || s.contains('cancelled')) {
-      return 'أُلغي التحقق.';
-    }
-    return 'تعذّر التحقق. حاول مجددًا.';
   }
 
   // ============================================
@@ -316,7 +361,6 @@ class LockService extends ChangeNotifier with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     switch (state) {
       case AppLifecycleState.paused:
-        // غادر التطبيق → سجّل الوقت
         if (_enabled) {
           _backgroundedAt = DateTime.now();
           _isFirstLaunch = false;
@@ -324,7 +368,10 @@ class LockService extends ChangeNotifier with WidgetsBindingObserver {
         break;
 
       case AppLifecycleState.resumed:
-        _checkLockOnResume();
+        // ✅ مهلة صغيرة قبل القفل التلقائي
+        Future.delayed(const Duration(milliseconds: 100), () {
+          _checkLockOnResume();
+        });
         break;
 
       case AppLifecycleState.inactive:
@@ -342,7 +389,6 @@ class LockService extends ChangeNotifier with WidgetsBindingObserver {
 
     final delayDuration = _delay.duration;
 
-    // "أبدًا" → لا تقفل تلقائيًا
     if (delayDuration == null) {
       _backgroundedAt = null;
       return;
@@ -352,8 +398,8 @@ class LockService extends ChangeNotifier with WidgetsBindingObserver {
 
     if (elapsed >= delayDuration) {
       _isLocked = true;
+      debugPrint('[Lock] Auto-locked (elapsed: ${elapsed.inSeconds}s)');
       notifyListeners();
-      debugPrint('[Lock] Locked (elapsed: ${elapsed.inSeconds}s)');
     }
 
     _backgroundedAt = null;
@@ -378,7 +424,6 @@ class LockService extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  /// وصف البصمات المتوفرة (للعرض في الإعدادات)
   String get biometricDescription {
     if (!_available) return 'البصمة غير متوفرة';
     if (_biometricTypes.isEmpty) return 'لم يتم تسجيل بصمات';
