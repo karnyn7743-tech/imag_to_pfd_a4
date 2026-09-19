@@ -66,6 +66,10 @@ class RtcService extends ChangeNotifier {
 
   DateTime? _callLogStartTime;
 
+  // ✅ تخزين SDP offer الوارد (للمستقبِل)
+  String? _pendingOfferSdp;
+  String? _pendingOfferType;
+
   int get callDurationSeconds {
     if (_callStartedAt == null) return 0;
     return DateTime.now().difference(_callStartedAt!).inSeconds;
@@ -114,15 +118,8 @@ class RtcService extends ChangeNotifier {
       'echoCancellation': true,
       'noiseSuppression': true,
       'autoGainControl': true,
-      'googEchoCancellation': true,
-      'googEchoCancellation2': true,
-      'googAutoGainControl': true,
-      'googAutoGainControl2': true,
-      'googNoiseSuppression': true,
-      'googHighpassFilter': true,
-      'googTypingNoiseDetection': true,
-      'sampleRate': AppConstants.audioSampleRate,
-      'channelCount': AppConstants.audioChannels,
+      'sampleRate': 8000,
+      'channelCount': 1,
     },
   };
 
@@ -131,10 +128,10 @@ class RtcService extends ChangeNotifier {
       'mandatory': {
         'minWidth': '320',
         'minHeight': '240',
-        'maxWidth': '${AppConstants.videoWidth}',
-        'maxHeight': '${AppConstants.videoHeight}',
+        'maxWidth': '640',
+        'maxHeight': '480',
         'minFrameRate': '15',
-        'maxFrameRate': '${AppConstants.videoFps}',
+        'maxFrameRate': '20',
       },
       'optional': <Map<String, dynamic>>[],
     },
@@ -166,12 +163,11 @@ class RtcService extends ChangeNotifier {
       return false;
     }
 
-    // تحقق من الحظر
     try {
       final blocked =
           await DatabaseHelper.instance.isDeviceBlocked(peerDeviceId);
       if (blocked) {
-        debugPrint('[RTC] Cannot call blocked device: $peerDeviceId');
+        debugPrint('[RTC] Cannot call blocked device');
         return false;
       }
     } catch (e) {
@@ -191,16 +187,23 @@ class RtcService extends ChangeNotifier {
     await _logCallStart(direction: AppConstants.callDirectionOutgoing);
 
     try {
+      // 1) افتح الوسائط المحلية
       await _openLocalMedia(callType);
+
+      // 2) أنشئ الاتصال
       await _createPeerConnection();
+
+      // 3) أضف المسارات
       await _addLocalTracks();
 
+      // 4) أنشئ عرض SDP
       final offer = await _pc!.createOffer({
         'offerToReceiveAudio': true,
         'offerToReceiveVideo': callType == AppConstants.callTypeVideo,
       });
       await _pc!.setLocalDescription(offer);
 
+      // 5) أرسل الدعوة مع SDP
       await _signaling!.sendTo(peerDeviceId, {
         'type': AppConstants.msgCallInvite,
         'callId': _currentCallId,
@@ -210,7 +213,7 @@ class RtcService extends ChangeNotifier {
         'sdpType': offer.type,
       });
 
-      debugPrint('[RTC] Call invite sent to $peerDeviceId');
+      debugPrint('[RTC] ✅ Call invite sent with SDP to $peerDeviceId');
       return true;
     } catch (e) {
       debugPrint('[RTC] startCall error: $e');
@@ -235,14 +238,11 @@ class RtcService extends ChangeNotifier {
       return;
     }
 
-    // ارفض المكالمة من جهاز محظور
     try {
       final blocked =
           await DatabaseHelper.instance.isDeviceBlocked(msg.from);
       if (blocked) {
-        debugPrint(
-          '[RTC] Rejected call from blocked device: ${msg.from}',
-        );
+        debugPrint('[RTC] Rejected call from blocked: ${msg.from}');
         await _signaling?.sendTo(msg.from, {
           'type': AppConstants.msgCallBusy,
           'callId': msg.payload['callId'],
@@ -262,10 +262,19 @@ class RtcService extends ChangeNotifier {
     _callState = AppConstants.callStateRinging;
     _hasRemoteVideo = false;
     _callLogStartTime = DateTime.now();
+
+    // ✅ احفظ SDP offer من الرسالة
+    _pendingOfferSdp = msg.payload['sdp'] as String?;
+    _pendingOfferType = msg.payload['sdpType'] as String? ?? 'offer';
+
+    debugPrint(
+      '[RTC] 📥 Incoming call — SDP stored: '
+      '${_pendingOfferSdp != null ? "YES (${_pendingOfferSdp!.length} chars)" : "NO"}',
+    );
+
     notifyListeners();
 
     await _logCallStart(direction: AppConstants.callDirectionIncoming);
-
     await _showCallkitIncoming();
 
     _eventController.add(RtcEvent(
@@ -278,13 +287,11 @@ class RtcService extends ChangeNotifier {
   }
 
   // ============================================
-  // === ✅ Callkit UI (مُصحَّح) ===
+  // === Callkit UI ===
   // ============================================
 
   Future<void> _showCallkitIncoming() async {
     try {
-      // ✅ نستخدم فقط المعاملات المعروفة في 3.1.5
-      // ونضع النصوص المخصصة داخل extra
       final params = CallKitParams(
         id: _currentCallId,
         nameCaller: _peerName,
@@ -296,10 +303,6 @@ class RtcService extends ChangeNotifier {
           'peerName': _peerName,
           'callType': _callType,
           'callId': _currentCallId,
-          'textAccept': 'قبول',
-          'textDecline': 'رفض',
-          'textMissedCall': 'مكالمة فائتة',
-          'textCallback': 'إعادة الاتصال',
         },
         android: const AndroidParams(
           isCustomNotification: true,
@@ -333,7 +336,6 @@ class RtcService extends ChangeNotifier {
       );
 
       await FlutterCallkitIncoming.showCallkitIncoming(params);
-      debugPrint('[RTC] Callkit shown for $_currentCallId');
     } catch (e) {
       debugPrint('[RTC] showCallkitIncoming error: $e');
     }
@@ -348,17 +350,15 @@ class RtcService extends ChangeNotifier {
   }
 
   // ============================================
-  // === أحداث Callkit (مُصحَّح) ===
+  // === أحداث Callkit ===
   // ============================================
 
   Future<void> _onCallkitEvent(CallEvent? event) async {
     if (event == null) return;
 
-    // ✅ toString() يُرجع اسم الحدث في كل الإصدارات
     final eventStr = event.toString();
     debugPrint('[RTC] Callkit event: $eventStr');
 
-    // مطابقة نصية
     if (eventStr.contains('actionCallAccept')) {
       await _onCallkitAccept(event);
     } else if (eventStr.contains('actionCallDecline')) {
@@ -404,26 +404,55 @@ class RtcService extends ChangeNotifier {
   }
 
   // ============================================
-  // === قبول / رفض ===
+  // === ✅ قبول المكالمة (مع SDP) ===
   // ============================================
 
   Future<bool> acceptCall() async {
     if (_callState != AppConstants.callStateRinging) return false;
 
+    if (_pendingOfferSdp == null) {
+      debugPrint('[RTC] ❌ Cannot accept: no SDP offer stored');
+      return false;
+    }
+
     try {
       _callState = AppConstants.callStateConnecting;
       notifyListeners();
 
+      // 1) افتح الوسائط المحلية
       await _openLocalMedia(_callType);
+
+      // 2) أنشئ الاتصال
       await _createPeerConnection();
+
+      // 3) ✅ اضبط SDP البعيد
+      await _pc!.setRemoteDescription(
+        RTCSessionDescription(_pendingOfferSdp!, _pendingOfferType!),
+      );
+      debugPrint('[RTC] ✅ Remote description set from offer');
+
+      // 4) عالج ICE المعلّقة
+      await _drainPendingCandidates();
+
+      // 5) أضف المسارات المحلية
       await _addLocalTracks();
 
+      // 6) أنشئ الرد
+      final answer = await _pc!.createAnswer({
+        'offerToReceiveAudio': true,
+        'offerToReceiveVideo': _callType == AppConstants.callTypeVideo,
+      });
+      await _pc!.setLocalDescription(answer);
+
+      // 7) أرسل الرد مع SDP
       await _signaling!.sendTo(_peerDeviceId, {
         'type': AppConstants.msgCallAccept,
         'callId': _currentCallId,
+        'sdp': answer.sdp,
+        'sdpType': answer.type,
       });
 
-      debugPrint('[RTC] Call accepted');
+      debugPrint('[RTC] ✅ Call accepted with SDP answer sent');
       return true;
     } catch (e) {
       debugPrint('[RTC] acceptCall error: $e');
@@ -485,10 +514,34 @@ class RtcService extends ChangeNotifier {
     }
   }
 
+  // ============================================
+  // === ✅ معالجة قبول الطرف الآخر (SDP answer) ===
+  // ============================================
+
   Future<void> _handleCallAccept(SignalingMessage msg) async {
     if (_callState != AppConstants.callStateCalling) return;
+
     _callState = AppConstants.callStateConnecting;
     notifyListeners();
+
+    // ✅ اقرأ SDP answer من الرسالة
+    final sdp = msg.payload['sdp'] as String?;
+    final sdpType = msg.payload['sdpType'] as String? ?? 'answer';
+
+    if (sdp != null && _pc != null) {
+      try {
+        await _pc!.setRemoteDescription(
+          RTCSessionDescription(sdp, sdpType),
+        );
+        debugPrint('[RTC] ✅ Remote description set from answer');
+
+        await _drainPendingCandidates();
+      } catch (e) {
+        debugPrint('[RTC] setRemoteDescription(answer) error: $e');
+      }
+    } else {
+      debugPrint('[RTC] ⚠️ Accept received without SDP');
+    }
   }
 
   Future<void> _handleCallReject(SignalingMessage msg) async {
@@ -612,11 +665,13 @@ class RtcService extends ChangeNotifier {
 
     if (_pc == null || _pc!.getRemoteDescription() == null) {
       _pendingCandidates.add(candidate);
+      debugPrint('[RTC] ICE queued (no remote desc yet)');
       return;
     }
 
     try {
       await _pc!.addCandidate(candidate);
+      debugPrint('[RTC] ICE added');
     } catch (e) {
       debugPrint('[RTC] addCandidate error: $e');
     }
@@ -624,6 +679,7 @@ class RtcService extends ChangeNotifier {
 
   Future<void> _drainPendingCandidates() async {
     if (_pc == null) return;
+    debugPrint('[RTC] Draining ${_pendingCandidates.length} ICE candidates');
     for (final c in _pendingCandidates) {
       try {
         await _pc!.addCandidate(c);
@@ -646,6 +702,7 @@ class RtcService extends ChangeNotifier {
 
     _pc!.onIceCandidate = (candidate) async {
       if (candidate.candidate == null) return;
+      debugPrint('[RTC] Local ICE → sending');
       await _signaling!.sendTo(_peerDeviceId, {
         'type': AppConstants.msgIceCandidate,
         'callId': _currentCallId,
@@ -658,6 +715,7 @@ class RtcService extends ChangeNotifier {
     };
 
     _pc!.onTrack = (RTCTrackEvent event) {
+      debugPrint('[RTC] 🎯 Remote track: ${event.track.kind}');
       if (event.streams.isNotEmpty) {
         _remoteStream = event.streams[0];
         if (event.track.kind == 'video') _hasRemoteVideo = true;
@@ -674,12 +732,14 @@ class RtcService extends ChangeNotifier {
     };
 
     _pc!.onIceConnectionState = (state) {
+      debugPrint('[RTC] ICE state: $state');
       if (state == RTCIceConnectionState.RTCIceConnectionStateFailed) {
         endCall(reason: 'ice-failed');
       }
     };
 
     _pc!.onConnectionState = (state) {
+      debugPrint('[RTC] Connection state: $state');
       switch (state) {
         case RTCPeerConnectionState.RTCPeerConnectionStateConnected:
           _callState = AppConstants.callStateConnected;
@@ -711,6 +771,9 @@ class RtcService extends ChangeNotifier {
     }
 
     _localStream = await navigator.mediaDevices.getUserMedia(constraints);
+    debugPrint(
+      '[RTC] Local stream: ${_localStream!.getTracks().length} tracks',
+    );
 
     if (callType != AppConstants.callTypeVideo) {
       _isVideoEnabled = false;
@@ -721,6 +784,7 @@ class RtcService extends ChangeNotifier {
     if (_localStream == null || _pc == null) return;
     for (final track in _localStream!.getTracks()) {
       await _pc!.addTrack(track, _localStream!);
+      debugPrint('[RTC] Added track: ${track.kind}');
     }
   }
 
@@ -905,6 +969,8 @@ class RtcService extends ChangeNotifier {
     _remoteStream = null;
     _pendingCandidates.clear();
     _hasRemoteVideo = false;
+    _pendingOfferSdp = null;
+    _pendingOfferType = null;
 
     try {
       await Helper.setSpeakerphoneOn(false);
@@ -924,6 +990,8 @@ class RtcService extends ChangeNotifier {
     _isMuted = false;
     _isVideoEnabled = true;
     _isFrontCamera = true;
+    _pendingOfferSdp = null;
+    _pendingOfferType = null;
   }
 
   String _generateCallId() {
