@@ -12,7 +12,7 @@ import '../audio_call_screen.dart';
 import '../video_call_screen.dart';
 
 /// ============================================================
-/// تبويب سجل المكالمات
+/// تبويب سجل المكالمات (مُعالج ومُحسن)
 /// ============================================================
 class CallsTab extends StatefulWidget {
   const CallsTab({super.key});
@@ -57,13 +57,15 @@ class _CallsTabState extends State<CallsTab> {
     if (peer == null || !peer.isOnline) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('الجهاز غير متصل حاليًا')),
+          const SnackBar(
+            content: Text('الجهاز غير متصل حاليًا بالشبكة المحلية'),
+            behavior: SnackBarBehavior.floating,
+          ),
         );
       }
       return;
     }
 
-    // ✅ استخدام ph.Permission
     final permissions = callType == AppConstants.callTypeVideo
         ? <ph.Permission>[
             ph.Permission.microphone,
@@ -72,9 +74,24 @@ class _CallsTabState extends State<CallsTab> {
         : <ph.Permission>[ph.Permission.microphone];
 
     final ok = await PermissionService.requestAll(permissions);
-    if (!ok || !mounted) return;
+    if (!ok) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('يتطلب إجراء المكالمة منح أذونات الميكروفون/الكاميرا'),
+            action: SnackBarAction(
+              label: 'الإعدادات',
+              onPressed: () => ph.openAppSettings(),
+            ),
+          ),
+        );
+      }
+      return;
+    }
 
-    Navigator.of(context).push(
+    if (!mounted) return;
+
+    await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => callType == AppConstants.callTypeVideo
             ? VideoCallScreen(peer: peer, isCaller: true)
@@ -82,7 +99,7 @@ class _CallsTabState extends State<CallsTab> {
       ),
     );
 
-    // أعِد التحميل عند العودة
+    // إعادة تحميل السجل فور العودة من شاشة المكالمة
     _loadLogs();
   }
 
@@ -138,9 +155,6 @@ class _CallsTabState extends State<CallsTab> {
       onRefresh: _loadLogs,
       child: Column(
         children: [
-          // ============================================
-          // === رأس مع زر المسح ===
-          // ============================================
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
             child: Row(
@@ -167,10 +181,6 @@ class _CallsTabState extends State<CallsTab> {
               ],
             ),
           ),
-
-          // ============================================
-          // === قائمة السجل ===
-          // ============================================
           Expanded(
             child: ListView.separated(
               physics: const AlwaysScrollableScrollPhysics(),
@@ -223,7 +233,6 @@ class _CallLogTile extends StatelessWidget {
       (d) => d.isDeviceOnline(peerId),
     );
 
-    // لون وأيقونة حسب نوع الاتجاه والحالة
     final (icon, iconColor) = _iconFor(direction, state);
 
     return Material(
@@ -235,9 +244,6 @@ class _CallLogTile extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
           child: Row(
             children: [
-              // ============================================
-              // === الأفاتار ===
-              // ============================================
               Stack(
                 children: [
                   Container(
@@ -285,12 +291,7 @@ class _CallLogTile extends StatelessWidget {
                     ),
                 ],
               ),
-
               const SizedBox(width: 14),
-
-              // ============================================
-              // === المعلومات ===
-              // ============================================
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -342,10 +343,6 @@ class _CallLogTile extends StatelessWidget {
                   ],
                 ),
               ),
-
-              // ============================================
-              // === زر الاتصال ===
-              // ============================================
               Icon(
                 type == AppConstants.callTypeVideo
                     ? Icons.videocam
