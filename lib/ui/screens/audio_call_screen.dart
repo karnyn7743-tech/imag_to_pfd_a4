@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -9,7 +10,7 @@ import '../../core/rtc/rtc_service.dart';
 import '../theme/app_theme.dart';
 
 /// ============================================================
-/// شاشة المكالمة الصوتية
+/// شاشة المكالمة الصوتية (مُصلحة ومحمية)
 /// ============================================================
 class AudioCallScreen extends StatefulWidget {
   final DiscoveredDevice peer;
@@ -26,16 +27,10 @@ class AudioCallScreen extends StatefulWidget {
 }
 
 class _AudioCallScreenState extends State<AudioCallScreen> {
-  // ============================================
-  // === المراجع ===
-  // ============================================
   RtcService? _rtc;
   StreamSubscription<RtcEvent>? _rtcEventSub;
   Timer? _durationTimer;
 
-  // ============================================
-  // === الحالة ===
-  // ============================================
   Duration _elapsed = Duration.zero;
   bool _isEndingCall = false;
 
@@ -46,10 +41,10 @@ class _AudioCallScreenState extends State<AudioCallScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       _rtc = context.read<RtcService>();
 
-      // استمع لأحداث RTC
+      // الاستماع لأحداث RTC
       _rtcEventSub = _rtc!.events.listen(_onRtcEvent);
 
-      // إذا كنا المُتصلين، ابدأ المكالمة
+      // إذا كنا المتصلين، ابدأ المكالمة
       if (widget.isCaller) {
         final ok = await _rtc!.startCall(
           peerDeviceId: widget.peer.deviceId,
@@ -58,12 +53,12 @@ class _AudioCallScreenState extends State<AudioCallScreen> {
         );
 
         if (!ok && mounted) {
-          _showErrorAndClose('تعذّر بدء المكالمة');
+          _showErrorAndClose('تعذّر بدء المكالمة الصوتية');
           return;
         }
       }
 
-      // شغّل مؤقت المدة (يعمل فقط عندما تكون الحالة connected)
+      // مؤقت حساب المدة
       _durationTimer = Timer.periodic(
         const Duration(seconds: 1),
         (_) => _tickDuration(),
@@ -78,10 +73,6 @@ class _AudioCallScreenState extends State<AudioCallScreen> {
     super.dispose();
   }
 
-  // ============================================
-  // === أدوات ===
-  // ============================================
-
   void _tickDuration() {
     final start = _rtc?.callStartedAt;
     if (start == null) return;
@@ -93,28 +84,28 @@ class _AudioCallScreenState extends State<AudioCallScreen> {
   }
 
   void _onRtcEvent(RtcEvent event) {
-    // تجاهل الأحداث لمكالمة أخرى
     if (event.peerDeviceId != widget.peer.deviceId) return;
 
     switch (event.type) {
       case RtcEventType.callEnded:
-        if (mounted && !_isEndingCall) {
-          _isEndingCall = true;
-          Future.delayed(const Duration(milliseconds: 300), () {
-            if (mounted) Navigator.of(context).pop();
-          });
-        }
+        _handleCloseScreen();
         break;
 
       case RtcEventType.error:
         if (mounted) {
-          _showErrorAndClose('حدث خطأ في المكالمة');
+          _showErrorAndClose('حدث خطأ أثناء المكالمة');
         }
         break;
 
       default:
         break;
     }
+  }
+
+  void _handleCloseScreen() {
+    if (_isEndingCall || !mounted) return;
+    _isEndingCall = true;
+    Navigator.of(context).pop();
   }
 
   Future<void> _endCall() async {
@@ -125,20 +116,20 @@ class _AudioCallScreenState extends State<AudioCallScreen> {
   }
 
   void _showErrorAndClose(String message) {
+    if (_isEndingCall) return;
+    _isEndingCall = true;
+
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
         backgroundColor: AppTheme.errorColor,
       ),
     );
-    Future.delayed(const Duration(seconds: 2), () {
+
+    Future.delayed(const Duration(seconds: 1), () {
       if (mounted) Navigator.of(context).pop();
     });
   }
-
-  // ============================================
-  // === نصوص الحالة ===
-  // ============================================
 
   String _getStatusText(RtcService rtc) {
     switch (rtc.callState) {
@@ -151,7 +142,7 @@ class _AudioCallScreenState extends State<AudioCallScreen> {
       case AppConstants.callStateConnected:
         return _formatDuration(_elapsed);
       case AppConstants.callStateDeclined:
-        return 'تم الرفض';
+        return 'تم رفض المكالمة';
       case AppConstants.callStateEnded:
         return 'انتهت المكالمة';
       default:
@@ -166,160 +157,130 @@ class _AudioCallScreenState extends State<AudioCallScreen> {
     return h > 0 ? '$h:$m:$s' : '$m:$s';
   }
 
-  // ============================================
-  // === الواجهة ===
-  // ============================================
-
   @override
   Widget build(BuildContext context) {
-    // نراقب تغيّرات RTC
     final rtc = context.watch<RtcService>();
 
-    // إذا انتهت المكالمة من طرف آخر، أغلق الشاشة
-    if (rtc.callState == AppConstants.callStateIdle && _isEndingCall) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) Navigator.of(context).pop();
-      });
-    }
-
-    return Scaffold(
-      backgroundColor: const Color(0xFF0A1A1F),
-      body: SafeArea(
-        child: Container(
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                Color(0xFF0F2A2E),
-                Color(0xFF0A1A1F),
-              ],
-            ),
-          ),
-          child: Column(
-            children: [
-              // ============================================
-              // === معلومات الطرف الآخر ===
-              // ============================================
-              Expanded(
-                flex: 5,
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const SizedBox(height: 20),
-
-                    // الصورة الرمزية
-                    Container(
-                      width: 140,
-                      height: 140,
-                      decoration: BoxDecoration(
-                        color: AppTheme.primaryColor.withOpacity(0.25),
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: AppTheme.primaryColor.withOpacity(0.5),
-                          width: 3,
-                        ),
-                      ),
-                      alignment: Alignment.center,
-                      child: Text(
-                        widget.peer.name.isNotEmpty
-                            ? widget.peer.name[0].toUpperCase()
-                            : '?',
-                        style: const TextStyle(
-                          fontSize: 60,
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-
-                    const SizedBox(height: 32),
-
-                    // الاسم
-                    Text(
-                      widget.peer.name,
-                      style: const TextStyle(
-                        fontSize: 28,
-                        color: Colors.white,
-                        fontWeight: FontWeight.w600,
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-
-                    const SizedBox(height: 12),
-
-                    // حالة المكالمة / المدة
-                    Text(
-                      _getStatusText(rtc),
-                      style: TextStyle(
-                        fontSize: 16,
-                        color: Colors.white.withOpacity(0.75),
-                        letterSpacing: 0.5,
-                        fontFeatures: const [
-                          // خط ثابت للأرقام لمنع "القفز"
-                          FontFeature.tabularFigures(),
-                        ],
-                      ),
-                    ),
-
-                    const SizedBox(height: 20),
-
-                    // مؤشر "نشِط" يتحرك أثناء الانتظار
-                    if (rtc.callState == AppConstants.callStateCalling ||
-                        rtc.callState == AppConstants.callStateRinging ||
-                        rtc.callState == AppConstants.callStateConnecting)
-                      const _PulsingDot(),
-                  ],
-                ),
+    return PopScope(
+      canPop: false,
+      onPopInvoked: (didPop) async {
+        if (didPop) return;
+        await _endCall();
+      },
+      child: Scaffold(
+        backgroundColor: const Color(0xFF0A1A1F),
+        body: SafeArea(
+          child: Container(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Color(0xFF0F2A2E),
+                  Color(0xFF0A1A1F),
+                ],
               ),
-
-              // ============================================
-              // === أزرار التحكم ===
-              // ============================================
-              Expanded(
-                flex: 4,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 24),
+            ),
+            child: Column(
+              children: [
+                // معلومات الطرف الآخر
+                Expanded(
+                  flex: 5,
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      // الصف الأول: كتم، مكبر، (فراغ)
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                        children: [
-                          _ControlButton(
-                            icon: rtc.isMuted
-                                ? Icons.mic_off
-                                : Icons.mic,
-                            label: rtc.isMuted ? 'إلغاء الكتم' : 'كتم',
-                            active: rtc.isMuted,
-                            onTap: () {
-                              rtc.toggleMute();
-                            },
+                      const SizedBox(height: 20),
+                      Container(
+                        width: 140,
+                        height: 140,
+                        decoration: BoxDecoration(
+                          color: AppTheme.primaryColor.withOpacity(0.25),
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: AppTheme.primaryColor.withOpacity(0.5),
+                            width: 3,
                           ),
-                          _ControlButton(
-                            icon: rtc.isSpeakerOn
-                                ? Icons.volume_up
-                                : Icons.volume_down,
-                            label: rtc.isSpeakerOn ? 'السماعة' : 'مكبر الصوت',
-                            active: rtc.isSpeakerOn,
-                            onTap: () {
-                              rtc.toggleSpeaker();
-                            },
+                        ),
+                        alignment: Alignment.center,
+                        child: Text(
+                          widget.peer.name.isNotEmpty
+                              ? widget.peer.name[0].toUpperCase()
+                              : '?',
+                          style: const TextStyle(
+                            fontSize: 60,
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
                           ),
-                          const SizedBox(width: 72),
-                        ],
+                        ),
                       ),
-
-                      const SizedBox(height: 40),
-
-                      // زر الإنهاء
-                      _HangupButton(onTap: _endCall),
+                      const SizedBox(height: 32),
+                      Text(
+                        widget.peer.name,
+                        style: const TextStyle(
+                          fontSize: 28,
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        _getStatusText(rtc),
+                        style: TextStyle(
+                          fontSize: 16,
+                          color: Colors.white.withOpacity(0.75),
+                          letterSpacing: 0.5,
+                          fontFeatures: const [
+                            FontFeature.tabularFigures(),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      if (rtc.callState == AppConstants.callStateCalling ||
+                          rtc.callState == AppConstants.callStateRinging ||
+                          rtc.callState == AppConstants.callStateConnecting)
+                        const _PulsingDot(),
                     ],
                   ),
                 ),
-              ),
-            ],
+
+                // أزرار التحكم
+                Expanded(
+                  flex: 4,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                          children: [
+                            _ControlButton(
+                              icon: rtc.isMuted
+                                  ? Icons.mic_off
+                                  : Icons.mic,
+                              label: rtc.isMuted ? 'إلغاء الكتم' : 'كتم',
+                              active: rtc.isMuted,
+                              onTap: () => rtc.toggleMute(),
+                            ),
+                            _ControlButton(
+                              icon: rtc.isSpeakerOn
+                                  ? Icons.volume_up
+                                  : Icons.volume_off,
+                              label: rtc.isSpeakerOn ? 'المكبر مفعل' : 'مكبر الصوت',
+                              active: rtc.isSpeakerOn,
+                              onTap: () => rtc.toggleSpeaker(),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 40),
+                        _HangupButton(onTap: _endCall),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -327,9 +288,6 @@ class _AudioCallScreenState extends State<AudioCallScreen> {
   }
 }
 
-// ============================================================
-// === زر التحكم الدائري ===
-// ============================================================
 class _ControlButton extends StatelessWidget {
   final IconData icon;
   final String label;
@@ -381,9 +339,6 @@ class _ControlButton extends StatelessWidget {
   }
 }
 
-// ============================================================
-// === زر إنهاء المكالمة ===
-// ============================================================
 class _HangupButton extends StatelessWidget {
   final VoidCallback onTap;
 
@@ -410,9 +365,6 @@ class _HangupButton extends StatelessWidget {
   }
 }
 
-// ============================================================
-// === نقطة نابضة (تُظهر أننا ننتظر) ===
-// ============================================================
 class _PulsingDot extends StatefulWidget {
   const _PulsingDot();
 
