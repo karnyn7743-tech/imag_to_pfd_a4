@@ -89,8 +89,7 @@ dependencies:
 
   # ✅ ترقية record من 5.x إلى 6.x (يحل مشكلة record_linux)
   record: ^5.1.2
-  record_linux: ^1.0.0
-
+  
   just_audio: ^0.9.42
 
   # ============================================
@@ -113,6 +112,10 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^5.0.0
+
+dependency_overrides:
+  record_linux: ^1.0.0
+  record_platform_interface: ^1.2.0
 
 flutter:
   uses-material-design: true
