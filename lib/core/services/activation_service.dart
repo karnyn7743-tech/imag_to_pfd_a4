@@ -19,26 +19,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 ///   ✅ مفتاح تطبيقنا لا يعمل في أي تطبيق آخر
 ///   ✅ مفتاح أي تطبيق آخر لا يعمل في تطبيقنا
 ///   ✅ ثابت عند إعادة التثبيت
-///
-/// ⚠️ يحتوي على وضع اختبار مؤقت — احذفه قبل النشر
 /// ============================================================
 class ActivationService extends ChangeNotifier {
   ActivationService() {
     _init();
   }
-
-  // ============================================
-  // === ⚠️ قائمة المعرّفات المتخطّاة (للاختبار) ===
-  // ============================================
-  ///
-  /// الأجهزة التي تحتوي معرّفها على أي من هذه القيم
-  /// ستُفعَّل تلقائيًا بدون مفتاح.
-  ///
-  /// ⚠️ يجب حذف هذا في الإصدار النهائي!
-  ///
-  static const List<String> _testDeviceIds = [
-    'ANDROID-QP1A.190711.020',
-  ];
 
   // ============================================
   // === مفاتيح SharedPreferences ===
@@ -103,23 +88,6 @@ class ActivationService extends ChangeNotifier {
 
       debugPrint('[Activation] Stable device ID: $_deviceId');
 
-      // ============================================
-      // === ✅ تخطي التنشيط للأجهزة المُختبَرة ===
-      // ============================================
-      // ⚠️ هذا القسم مؤقت — احذفه قبل النشر
-      if (_isTestDevice(id)) {
-        _activated = true;
-        _checking = false;
-        _error = null;
-        debugPrint(
-          '[Activation] ⚠️ TEST MODE — Device is whitelisted, '
-          'skipping activation',
-        );
-        notifyListeners();
-        return;
-      }
-      // ============================================
-
       final prefs = await SharedPreferences.getInstance();
       final savedDeviceId = prefs.getString(_keyActivatedDeviceId);
       final savedKeyHash = prefs.getString(_keyActivatedKeyHash);
@@ -145,22 +113,6 @@ class ActivationService extends ChangeNotifier {
   }
 
   // ============================================
-  // === ✅ فحص هل الجهاز في القائمة البيضاء ===
-  // ============================================
-  ///
-  /// يُرجع true إذا كان معرّف الجهاز يحتوي على أي قيمة
-  /// من قائمة `_testDeviceIds`.
-  ///
-  bool _isTestDevice(String deviceId) {
-    for (final testId in _testDeviceIds) {
-      if (deviceId.contains(testId)) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  // ============================================
   // === معرّف الجهاز الثابت ===
   // ============================================
 
@@ -171,7 +123,6 @@ class ActivationService extends ChangeNotifier {
       if (Platform.isAndroid) {
         final info = await plugin.androidInfo;
         // في device_info_plus 11.x، الخاصية هي `id`
-        // (كانت `androidId` في الإصدارات الأقدم)
         return 'ANDROID-${info.id}';
       }
 
