@@ -962,7 +962,7 @@ class _ChatScreenState extends State<ChatScreen> {
       if (mediaType == AppConstants.mediaImage) {
         return [ph.Permission.photos];
       } else if (mediaType == AppConstants.mediaVideo) {
-        return [ph.Permission.videos];
+        return [ph.Permission.storage];
       }
       return [];
     }
