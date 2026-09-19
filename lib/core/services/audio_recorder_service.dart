@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:audio_session/audio_session.dart';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -8,7 +9,8 @@ import 'package:record/record.dart';
 
 /// ============================================================
 /// خدمة التسجيل الصوتي
-/// تُسجّل بصيغة AAC/M4A (خفيفة وجودة جيدة للصوت البشري)
+/// ------------------------------------------------
+/// تُسجّل بصيغة AAC/M4A بجودة عالية
 /// ============================================================
 class AudioRecorderService {
   // ============================================
@@ -41,6 +43,57 @@ class AudioRecorderService {
   }
 
   // ============================================
+  // === ✅ تكوين جلسة الصوت ===
+  // ============================================
+  //
+  // نُهيئ جلسة الصوت لوضع التسجيل لضمان:
+  //   - استخدام مكبر الصوت الأمامي (لأخذ صوت أعلى)
+  //   - تحسين مستوى الإدخال
+  //   - تفعيل AGC (تحكم تلقائي بالكسب)
+
+  Future<void> _configureAudioSession() async {
+    try {
+      final session = await AudioSession.instance;
+
+      // تكوين للتسجيل بجودة عالية
+      await session.configure(const AudioSessionConfiguration(
+        avAudioSessionCategory: AVAudioSessionCategory.playAndRecord,
+        avAudioSessionCategoryOptions:
+            AVAudioSessionCategoryOptions.allowBluetooth |
+                AVAudioSessionCategoryOptions.defaultToSpeaker |
+                AVAudioSessionCategoryOptions.mixWithOthers,
+        avAudioSessionMode: AVAudioSessionMode.videoRecording,
+        avAudioSessionRouteSharingPolicy:
+            AVAudioSessionRouteSharingPolicy.defaultPolicy,
+        avAudioSessionSetActiveOptions: AVAudioSessionSetActiveOptions.none,
+        androidAudioAttributes: AndroidAudioAttributes(
+          contentType: AndroidAudioContentType.speech,
+          flags: AndroidAudioFlags.none,
+          usage: AndroidAudioUsage.voiceCommunication,
+        ),
+        androidAudioFocusGainType:
+            AndroidAudioFocusGainType.gainTransientExclusive,
+        androidWillPauseWhenDucked: false,
+      ));
+
+      await session.setActive(true);
+      debugPrint('[Recorder] ✅ Audio session configured for recording');
+    } catch (e) {
+      debugPrint('[Recorder] _configureAudioSession error: $e');
+    }
+  }
+
+  Future<void> _releaseAudioSession() async {
+    try {
+      final session = await AudioSession.instance;
+      await session.setActive(false);
+      debugPrint('[Recorder] Audio session released');
+    } catch (e) {
+      debugPrint('[Recorder] _releaseAudioSession error: $e');
+    }
+  }
+
+  // ============================================
   // === بدء التسجيل ===
   // ============================================
 
@@ -49,6 +102,7 @@ class AudioRecorderService {
       // أوقف أي تسجيل جارٍ
       if (_isRecording) {
         await _recorder.stop();
+        await _releaseAudioSession();
       }
 
       // تحقق من الإذن
@@ -57,6 +111,9 @@ class AudioRecorderService {
         debugPrint('[Recorder] No permission');
         return null;
       }
+
+      // ✅ هيّئ جلسة الصوت
+      await _configureAudioSession();
 
       // مجلد الصوت
       final dir = await getApplicationDocumentsDirectory();
@@ -71,21 +128,30 @@ class AudioRecorderService {
       _currentPath = p.join(audioDir.path, fileName);
       _startedAt = DateTime.now();
 
-      // إعدادات التسجيل (مناسبة للصوت البشري)
+      // ✅ إعدادات تسجيل عالية الجودة (صوت أعلى وأوضح)
       const config = RecordConfig(
         encoder: AudioEncoder.aacLc,
-        bitRate: 48000, // 48 kbps
-        sampleRate: 16000, // 16 kHz (يكفي للصوت)
-        numChannels: 1, // mono
+        // ✅ 128 kbps بدل 48 (جودة عالية، صوت أوضح وأعلى)
+        bitRate: 128000,
+        // ✅ 44.1 kHz بدل 16 (جودة صوت موسيقية)
+        sampleRate: 44100,
+        // مونو لتوفير المساحة
+        numChannels: 1,
+        // ✅ تحسينات إضافية
+        autoGain: true,        // تحكم تلقائي بمستوى الصوت
+        echoCancel: true,      // إلغاء الصدى
+        noiseSuppress: true,   // إزالة الضجيج
       );
 
       await _recorder.start(config, path: _currentPath!);
       _isRecording = true;
 
-      debugPrint('[Recorder] Started: $_currentPath');
+      debugPrint('[Recorder] ✅ Started: $_currentPath');
+      debugPrint('[Recorder]    bitRate: 128000, sampleRate: 44100');
       return _currentPath;
     } catch (e) {
       debugPrint('[Recorder] start error: $e');
+      await _releaseAudioSession();
       _reset();
       return null;
     }
@@ -103,6 +169,9 @@ class AudioRecorderService {
       final started = _startedAt;
       _isRecording = false;
       _startedAt = null;
+
+      // ✅ حرّر جلسة الصوت
+      await _releaseAudioSession();
 
       if (path == null || started == null) {
         _reset();
@@ -122,7 +191,7 @@ class AudioRecorderService {
       final size = await file.length();
 
       // إذا كان التسجيل قصيرًا جدًا (< 1 ثانية) → تجاهل
-      if (durationMs < 1000 || size < 1000) {
+      if (durationMs < 1000 || size < 2000) {
         debugPrint('[Recorder] Too short — discarding');
         await file.delete();
         _reset();
@@ -130,8 +199,8 @@ class AudioRecorderService {
       }
 
       debugPrint(
-        '[Recorder] Stopped: $path '
-        '(${durationMs}ms, ${size}B)',
+        '[Recorder] ✅ Stopped: $path '
+        '(${durationMs}ms, ${(size / 1024).toStringAsFixed(1)} KB)',
       );
 
       _currentPath = null;
@@ -143,6 +212,7 @@ class AudioRecorderService {
       );
     } catch (e) {
       debugPrint('[Recorder] stop error: $e');
+      await _releaseAudioSession();
       _reset();
       return null;
     }
@@ -158,6 +228,8 @@ class AudioRecorderService {
         await _recorder.stop();
       }
       _isRecording = false;
+
+      await _releaseAudioSession();
 
       // احذف الملف
       if (_currentPath != null) {
@@ -196,6 +268,7 @@ class AudioRecorderService {
     try {
       await _recorder.dispose();
     } catch (_) {}
+    await _releaseAudioSession();
   }
 }
 
@@ -218,5 +291,13 @@ class RecordingResult {
     final m = s ~/ 60;
     final rem = s % 60;
     return '$m:${rem.toString().padLeft(2, '0')}';
+  }
+
+  String get formattedSize {
+    if (sizeBytes < 1024) return '$sizeBytes B';
+    if (sizeBytes < 1024 * 1024) {
+      return '${(sizeBytes / 1024).toStringAsFixed(1)} KB';
+    }
+    return '${(sizeBytes / (1024 * 1024)).toStringAsFixed(1)} MB';
   }
 }
