@@ -9,9 +9,6 @@ import '../theme/app_theme.dart';
 
 /// ============================================================
 /// شاشة قفل التطبيق
-/// ------------------------------------------------
-/// تظهر عند تشغيل التطبيق أو العودة إليه بعد قفله.
-/// تُطلب فيها المصادقة الحيوية (بصمة / تعرّف على الوجه).
 /// ============================================================
 class LockScreen extends StatefulWidget {
   const LockScreen({super.key});
@@ -22,15 +19,11 @@ class LockScreen extends StatefulWidget {
 
 class _LockScreenState extends State<LockScreen>
     with SingleTickerProviderStateMixin {
-  // ============================================
-  // === المراجع ===
-  // ============================================
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
 
-  // ============================================
-  // === دورة الحياة ===
-  // ============================================
+  // ✅ منع البدء المتكرر
+  bool _autoAttempted = false;
 
   @override
   void initState() {
@@ -48,12 +41,14 @@ class _LockScreenState extends State<LockScreen>
       ),
     );
 
-    // ابدأ المصادقة تلقائيًا بعد ظهور الشاشة
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      await Future.delayed(const Duration(milliseconds: 400));
-      if (mounted) {
+    // ✅ محاولة تلقائية واحدة فقط، بعد مهلة كافية
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Future.delayed(const Duration(milliseconds: 800), () {
+        if (!mounted) return;
+        if (_autoAttempted) return;
+        _autoAttempted = true;
         _attemptUnlock();
-      }
+      });
     });
   }
 
@@ -69,15 +64,20 @@ class _LockScreenState extends State<LockScreen>
 
   Future<void> _attemptUnlock() async {
     final lockService = context.read<LockService>();
-    if (lockService.isAuthenticating) return;
+
+    // ✅ لا تُحاول إذا كانت المصادقة جارية
+    if (lockService.isAuthenticating) {
+      debugPrint('[LockScreen] Already authenticating');
+      return;
+    }
 
     HapticFeedback.lightImpact();
-    await lockService.authenticate();
+
+    final ok = await lockService.authenticate();
 
     if (!mounted) return;
 
-    // إذا فشلت، أظهر الاهتزاز
-    if (lockService.lastError != null) {
+    if (!ok) {
       HapticFeedback.heavyImpact();
     }
   }
@@ -93,7 +93,6 @@ class _LockScreenState extends State<LockScreen>
     return Scaffold(
       backgroundColor: const Color(0xFF0A1A1F),
       body: PopScope(
-        // منع الرجوع من هذه الشاشة
         canPop: false,
         child: Container(
           decoration: const BoxDecoration(
@@ -111,9 +110,7 @@ class _LockScreenState extends State<LockScreen>
               children: [
                 const Spacer(flex: 2),
 
-                // ============================================
-                // === الشعار مع النبض ===
-                // ============================================
+                // الشعار
                 AnimatedBuilder(
                   animation: _pulseAnimation,
                   builder: (context, child) {
@@ -150,9 +147,6 @@ class _LockScreenState extends State<LockScreen>
 
                 const SizedBox(height: 32),
 
-                // ============================================
-                // === اسم التطبيق ===
-                // ============================================
                 const Text(
                   AppConstants.appName,
                   style: TextStyle(
@@ -165,9 +159,6 @@ class _LockScreenState extends State<LockScreen>
 
                 const SizedBox(height: 8),
 
-                // ============================================
-                // === الحالة ===
-                // ============================================
                 Text(
                   lockService.isAuthenticating
                       ? 'جارٍ التحقق...'
@@ -180,7 +171,6 @@ class _LockScreenState extends State<LockScreen>
 
                 const SizedBox(height: 12),
 
-                // نوع البصمة
                 if (lockService.available)
                   Container(
                     padding: const EdgeInsets.symmetric(
@@ -213,9 +203,7 @@ class _LockScreenState extends State<LockScreen>
 
                 const SizedBox(height: 40),
 
-                // ============================================
-                // === رسالة الخطأ ===
-                // ============================================
+                // رسالة الخطأ
                 if (lockService.lastError != null)
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 32),
@@ -253,9 +241,7 @@ class _LockScreenState extends State<LockScreen>
 
                 const SizedBox(height: 24),
 
-                // ============================================
-                // === رسالة "البصمة غير متوفرة" ===
-                // ============================================
+                // رسالة "البصمة غير متوفرة"
                 if (!lockService.available)
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 32),
@@ -302,9 +288,7 @@ class _LockScreenState extends State<LockScreen>
 
                 const Spacer(flex: 1),
 
-                // ============================================
-                // === زر الفتح ===
-                // ============================================
+                // زر الفتح
                 if (lockService.available)
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 40),
@@ -361,9 +345,6 @@ class _LockScreenState extends State<LockScreen>
 
                 const Spacer(flex: 1),
 
-                // ============================================
-                // === نص تلميح ===
-                // ============================================
                 Padding(
                   padding: const EdgeInsets.only(bottom: 20),
                   child: Text(
